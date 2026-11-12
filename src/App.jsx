@@ -40,7 +40,6 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'armoury-1f82a';
 
 // Admin email (auto-approved without needing an invite passkey)
 const ADMIN_EMAIL = 'patteri6907@gmail.com';
-// Change this passkey (or set VITE_INVITE_PASSKEY in .env) and share it only with friends you invite!
 const INVITE_PASSKEY = import.meta.env.VITE_INVITE_PASSKEY || '3GUN-FINLAND-2026';
 
 export default function App() {
@@ -107,14 +106,12 @@ export default function App() {
 
       setUser(u);
 
-      // Admin or preview anonymous user bypasses passkey
       if (u.isAnonymous || u.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
         setIsVerified(true);
         setLoading(false);
         return;
       }
 
-      // Check if this Google user has already redeemed the invite passkey
       try {
         const profileRef = doc(db, 'artifacts', appId, 'users', u.uid, 'profile', 'access');
         const profileSnap = await getDoc(profileRef);
@@ -274,28 +271,6 @@ export default function App() {
     e.preventDefault();
     if (!user) return;
     const form = e.target;
-    const type = form.type.value;
-    const notes = form.notes.value;
-    const date = new Date().toISOString().split('T')[0];
-
-    const newLog = { date, type, notes };
-    const updatedLog = [...(selectedGunForMaint.maintenanceLog || []), newLog];
-
-    try {
-      const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'firearms', selectedGunForMaint.id);
-      await updateDoc(docRef, { maintenanceLog: updatedLog });
-      showToast("Maintenance logged successfully");
-      setShowMaintModal(false);
-      setSelectedGunForMaint(null);
-    } catch (err) {
-      showToast("Failed to log maintenance", "error");
-    }
-  };
-
-  // --- Handlers: Ammo ---
-  const handleSaveAmmo = async (e) => {
-    e.preventDefault();
-    const form = e.target;
     const name = form.name.value;
     const caliber = form.caliber.value;
     const weight = form.weight.value;
@@ -368,8 +343,6 @@ export default function App() {
     const weatherConditions = form.weatherConditions.value;
     const notes = form.notes.value;
 
-    // Collect firearms used and rounds fired from dynamic form or selection
-    // For simplicity in this demo, parse selected firearms & round counts from inputs
     const firearmEntries = firearms.map(gun => {
       const input = form.elements[`gun_rounds_${gun.id}`];
       const fired = input ? Number(input.value) || 0 : 0;
@@ -381,7 +354,6 @@ export default function App() {
       return;
     }
 
-    // Aggregate ammo consumed per caliber
     const ammoConsumptionMap = {};
     firearmEntries.forEach(entry => {
       ammoConsumptionMap[entry.caliber] = (ammoConsumptionMap[entry.caliber] || 0) + entry.roundsFired;
@@ -392,7 +364,6 @@ export default function App() {
       roundsUsed: used
     }));
 
-    // Verify ammo stock availability
     for (const item of ammoConsumed) {
       const reserve = ammoReserves.find(r => r.caliber.toLowerCase().includes(item.caliber.toLowerCase()) || item.caliber.toLowerCase().includes(r.caliber.toLowerCase()));
       if (reserve && reserve.currentStock < item.roundsUsed) {
@@ -411,11 +382,9 @@ export default function App() {
     };
 
     try {
-      // 1. Add session record
       const sessionsCol = collection(db, 'artifacts', appId, 'users', user.uid, 'sessions');
       await addDoc(sessionsCol, sessionData);
 
-      // 2. Update firearms session round counts
       for (const entry of firearmEntries) {
         const gun = firearms.find(g => g.id === entry.firearmId);
         if (gun) {
@@ -425,7 +394,6 @@ export default function App() {
         }
       }
 
-      // 3. Deduct ammo reserves
       for (const item of ammoConsumed) {
         const reserve = ammoReserves.find(r => r.caliber.toLowerCase().includes(item.caliber.toLowerCase()) || item.caliber.toLowerCase().includes(r.caliber.toLowerCase()));
         if (reserve) {
@@ -551,7 +519,7 @@ export default function App() {
     );
   }
 
-  // --- First-Time Passkey Gate (Anti-Bot Protection) ---
+  // --- First-Time Passkey Gate ---
   if (!isVerified) {
     return (
       <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center justify-center p-6 font-sans">
@@ -603,7 +571,6 @@ export default function App() {
     );
   }
 
-  // Calculate Dashboard Metrics
   const totalFirearms = firearms.length;
   const totalRoundsFiredAllTime = firearms.reduce((acc, g) => acc + (g.initialBaselineRounds || 0) + (g.sessionRoundsCount || 0), 0);
   const totalAmmoStock = ammoReserves.reduce((acc, a) => acc + a.currentStock, 0);
@@ -612,7 +579,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-black">
       
-      {/* Toast Notification */}
       {toast && (
         <div className={`fixed top-5 right-5 z-50 px-5 py-3 rounded-lg shadow-xl border text-sm font-medium tracking-wide transition-all transform animate-bounce ${
           toast.type === 'error' ? 'bg-rose-950/90 border-rose-700 text-rose-200' : 
@@ -708,7 +674,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Quick Actions & Recent Activity */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               <div className="lg:col-span-2 bg-zinc-900/60 border border-zinc-800 p-6 rounded-2xl">
                 <div className="flex justify-between items-center mb-6">
@@ -745,7 +710,6 @@ export default function App() {
                 )}
               </div>
 
-              {/* Quick Ammo Status Card */}
               <div className="bg-zinc-900/60 border border-zinc-800 p-6 rounded-2xl flex flex-col justify-between">
                 <div>
                   <h2 className="text-sm font-bold tracking-widest uppercase text-zinc-300 mb-4">Ammo Reserve Alerts</h2>
@@ -787,7 +751,7 @@ export default function App() {
           </div>
         )}
 
-        {/* --- VIEW: THE VAULT (FIREARMS) --- */}
+        {/* --- VIEW: THE VAULT --- */}
         {activeTab === 'vault' && (
           <div className="space-y-6">
             <div className="flex justify-between items-center">
@@ -818,20 +782,8 @@ export default function App() {
                         <div className="flex justify-between items-start gap-2">
                           <span className="px-2.5 py-1 rounded text-[10px] font-bold tracking-widest uppercase bg-zinc-800 text-emerald-400 border border-zinc-700">{gun.caliber}</span>
                           <div className="flex space-x-2">
-                            <button 
-                              onClick={() => { setEditingGun(gun); setShowGunModal(true); }}
-                              className="text-zinc-400 hover:text-zinc-100 text-xs tracking-wider"
-                              title="Edit Firearm"
-                            >
-                              Edit
-                            </button>
-                            <button 
-                              onClick={() => handleDeleteFirearm(gun.id)}
-                              className="text-rose-400 hover:text-rose-300 text-xs tracking-wider"
-                              title="Delete Firearm"
-                            >
-                              Del
-                            </button>
+                            <button onClick={() => { setEditingGun(gun); setShowGunModal(true); }} className="text-zinc-400 hover:text-zinc-100 text-xs">Edit</button>
+                            <button onClick={() => handleDeleteFirearm(gun.id)} className="text-rose-400 hover:text-rose-300 text-xs">Del</button>
                           </div>
                         </div>
 
@@ -873,24 +825,16 @@ export default function App() {
                             <p className="text-[10px] text-zinc-400 tracking-widest uppercase mb-1.5 font-semibold">Accessories & Optics</p>
                             <div className="flex flex-wrap gap-1.5">
                               {gun.accessories.map((acc, idx) => (
-                                <span key={idx} className="bg-zinc-800/80 text-zinc-300 text-[11px] px-2.5 py-0.5 rounded-lg border border-zinc-700/60">
-                                  {acc}
-                                </span>
+                                <span key={idx} className="bg-zinc-800/80 text-zinc-300 text-[11px] px-2.5 py-0.5 rounded-lg border border-zinc-700/60">{acc}</span>
                               ))}
                             </div>
                           </div>
                         )}
 
-                        {/* Maintenance Log Summary */}
                         <div className="mt-4 pt-4 border-t border-zinc-800">
                           <div className="flex justify-between items-center mb-2">
                             <p className="text-[10px] text-zinc-400 tracking-widest uppercase font-semibold">Maintenance History ({gun.maintenanceLog?.length || 0})</p>
-                            <button 
-                              onClick={() => { setSelectedGunForMaint(gun); setShowMaintModal(true); }}
-                              className="text-emerald-400 hover:text-emerald-300 text-[11px] font-bold tracking-wider uppercase"
-                            >
-                              + Log Service
-                            </button>
+                            <button onClick={() => { setSelectedGunForMaint(gun); setShowMaintModal(true); }} className="text-emerald-400 hover:text-emerald-300 text-[11px] font-bold tracking-wider uppercase">+ Log Service</button>
                           </div>
                           {gun.maintenanceLog && gun.maintenanceLog.length > 0 ? (
                             <div className="space-y-1.5 max-h-24 overflow-y-auto pr-1">
@@ -922,10 +866,7 @@ export default function App() {
                 <h2 className="text-xl font-bold tracking-wider text-zinc-100">Ammunition Reserves</h2>
                 <p className="text-xs text-zinc-400 tracking-wide mt-0.5">Monitor live inventory, burn rates, and purchase ledgers.</p>
               </div>
-              <button 
-                onClick={() => { setEditingAmmo(null); setShowAmmoModal(true); }}
-                className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-4 py-2.5 rounded-xl text-xs tracking-wider uppercase transition shadow-md"
-              >
+              <button onClick={() => { setEditingAmmo(null); setShowAmmoModal(true); }} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-4 py-2.5 rounded-xl text-xs tracking-wider uppercase transition shadow-md">
                 + Track Caliber
               </button>
             </div>
@@ -948,20 +889,14 @@ export default function App() {
                           }`}>
                             {isLow ? 'Buffer Warning' : 'Stock Optimal'}
                           </span>
-                          <div className="flex space-x-2">
-                            <button onClick={() => { setEditingAmmo(ammo); setShowAmmoModal(true); }} className="text-zinc-400 hover:text-zinc-100 text-xs">Edit</button>
-                          </div>
+                          <button onClick={() => { setEditingAmmo(ammo); setShowAmmoModal(true); }} className="text-zinc-400 hover:text-zinc-100 text-xs">Edit</button>
                         </div>
 
                         <h3 className="text-lg font-bold text-zinc-100 mt-4">{ammo.name || ammo.caliber}</h3>
                         <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                          <span className="px-2 py-0.5 rounded text-[11px] font-mono font-semibold bg-zinc-800 text-emerald-400 border border-zinc-700/70">
-                            {ammo.caliber}
-                          </span>
+                          <span className="px-2 py-0.5 rounded text-[11px] font-mono font-semibold bg-zinc-800 text-emerald-400 border border-zinc-700/70">{ammo.caliber}</span>
                           {ammo.weight && (
-                            <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-zinc-950 text-zinc-300 border border-zinc-800">
-                              {ammo.weight} {ammo.weightUnit || 'gr'}
-                            </span>
+                            <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-zinc-950 text-zinc-300 border border-zinc-800">{ammo.weight} {ammo.weightUnit || 'gr'}</span>
                           )}
                         </div>
 
@@ -976,7 +911,6 @@ export default function App() {
                           </div>
                         </div>
 
-                        {/* Purchase Ledger Summary */}
                         <div className="mt-4 pt-4 border-t border-zinc-800">
                           <p className="text-[10px] text-zinc-400 tracking-widest uppercase font-semibold mb-2">Purchase History ({ammo.purchaseLedger?.length || 0})</p>
                           {ammo.purchaseLedger && ammo.purchaseLedger.length > 0 ? (
@@ -994,10 +928,7 @@ export default function App() {
                         </div>
                       </div>
 
-                      <button 
-                        onClick={() => { setSelectedAmmoForPurchase(ammo); setShowPurchaseModal(true); }}
-                        className="mt-6 w-full py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-xl text-xs font-bold tracking-widest uppercase transition"
-                      >
+                      <button onClick={() => { setSelectedAmmoForPurchase(ammo); setShowPurchaseModal(true); }} className="mt-6 w-full py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-xl text-xs font-bold tracking-widest uppercase transition">
                         + Log Ammo Purchase
                       </button>
                     </div>
@@ -1016,10 +947,7 @@ export default function App() {
                 <h2 className="text-xl font-bold tracking-wider text-zinc-100">Range & Match Log</h2>
                 <p className="text-xs text-zinc-400 tracking-wide mt-0.5">Chronological record of range sessions, drills, and USPSA/3-Gun matches.</p>
               </div>
-              <button 
-                onClick={() => setShowSessionModal(true)}
-                className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-4 py-2.5 rounded-xl text-xs tracking-wider uppercase transition shadow-md"
-              >
+              <button onClick={() => setShowSessionModal(true)} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-4 py-2.5 rounded-xl text-xs tracking-wider uppercase transition shadow-md">
                 + Log New Session
               </button>
             </div>
@@ -1133,8 +1061,6 @@ export default function App() {
       </main>
 
       {/* --- MODALS --- */}
-
-      {/* 1. Add/Edit Firearm Modal */}
       {showGunModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative my-8">
@@ -1142,7 +1068,7 @@ export default function App() {
             <form onSubmit={handleSaveFirearm} className="space-y-4">
               <div>
                 <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Firearm Name</label>
-                <input name="name" defaultValue={editingGun?.name || ''} placeholder="e.g., 18' AR-556 MPR" required className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 font-medium" />
+                <input name="name" defaultValue={editingGun?.name || ''} placeholder="e.g., 18&quot; AR-556 MPR" required className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 font-medium" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -1191,7 +1117,6 @@ export default function App() {
         </div>
       )}
 
-      {/* 2. Add Maintenance Modal */}
       {showMaintModal && selectedGunForMaint && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
@@ -1220,7 +1145,6 @@ export default function App() {
         </div>
       )}
 
-      {/* 3. Add/Edit Ammo Caliber Modal */}
       {showAmmoModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
@@ -1238,20 +1162,8 @@ export default function App() {
                 <div>
                   <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Bullet Weight</label>
                   <div className="flex rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden focus-within:border-emerald-500">
-                    <input 
-                      type="number" 
-                      step="any" 
-                      name="weight" 
-                      defaultValue={editingAmmo?.weight || ''} 
-                      placeholder="124" 
-                      required 
-                      className="w-full bg-transparent px-3 py-2.5 text-sm text-zinc-100 focus:outline-none font-mono" 
-                    />
-                    <select 
-                      name="weightUnit" 
-                      defaultValue={editingAmmo?.weightUnit || 'gr'} 
-                      className="bg-zinc-900 border-l border-zinc-800 px-2.5 py-2.5 text-xs font-mono font-bold text-emerald-400 focus:outline-none cursor-pointer"
-                    >
+                    <input type="number" step="any" name="weight" defaultValue={editingAmmo?.weight || ''} placeholder="124" required className="w-full bg-transparent px-3 py-2.5 text-sm text-zinc-100 focus:outline-none font-mono" />
+                    <select name="weightUnit" defaultValue={editingAmmo?.weightUnit || 'gr'} className="bg-zinc-900 border-l border-zinc-800 px-2.5 py-2.5 text-xs font-mono font-bold text-emerald-400 focus:outline-none cursor-pointer">
                       <option value="gr">gr</option>
                       <option value="g">g</option>
                     </select>
@@ -1277,7 +1189,6 @@ export default function App() {
         </div>
       )}
 
-      {/* 4. Log Ammo Purchase Modal */}
       {showPurchaseModal && selectedAmmoForPurchase && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
@@ -1309,7 +1220,6 @@ export default function App() {
         </div>
       )}
 
-      {/* 5. New Range Session Modal */}
       {showSessionModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl relative my-8">
@@ -1344,7 +1254,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Firearm Round Counts Selection */}
               <div>
                 <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-2">Firearms Used & Rounds Fired</label>
                 {firearms.length === 0 ? (
