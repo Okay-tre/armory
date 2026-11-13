@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
-  signInAnonymously, 
   signInWithCustomToken, 
   onAuthStateChanged, 
   GoogleAuthProvider, 
@@ -42,18 +41,31 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'armoury-1f82a';
 const ADMIN_EMAIL = 'patteri6907@gmail.com';
 const INVITE_PASSKEY = import.meta.env.VITE_INVITE_PASSKEY || '3GUN-2026';
 
-// --- Helper Component: Beautiful Tactical AI Report Renderer ---
+// Preset Shooting Disciplines (Finnish & International sports)
+const PRESET_DISCIPLINES = [
+  { id: 'SRA', name: 'SRA (Sovellettu Reserviläisammunta)', tag: 'Dynamic Tactical', desc: 'Finnish applied reservist multi-gun shooting with rifle, pistol, shotgun & sniper stages.' },
+  { id: 'IPSC', name: 'IPSC / Practical Shooting', tag: 'Action / Speed', desc: 'High-speed dynamic handgun, PCC, rifle, or shotgun competition focused on DVC (Accuracy, Power, Speed).' },
+  { id: '3-Gun', name: '3-Gun / Multi-Gun', tag: 'Multi-Platform', desc: 'Fast-paced transitions across rifle, pistol, and shotgun on varied target distances.' },
+  { id: 'PRS', name: 'PRS / Long Range Precision', tag: 'Precision / Ballistics', desc: 'Positional barricades, wind reading, dope charts, and long-distance steel engagements.' },
+  { id: 'Benchrest', name: 'Benchrest / Kasapanos', tag: 'Extreme Accuracy', desc: 'Sub-MOA group shooting, load development, barrel harmonics, and precision rest work.' },
+  { id: 'IDPA', name: 'IDPA / Defensive Pistol', tag: 'Concealed / Tactical', desc: 'Practical self-defense scenarios emphasizing cover, concealment, and real-world gear.' },
+  { id: 'Reserviläisammunta', name: 'Perinteinen Reserviläisammunta (RA)', tag: 'Service Rifle / Pistol', desc: 'Standardized Finnish service rifle and pistol precision & rapid-fire courses.' },
+  { id: 'Siluetti / Rimfire', name: 'Metallic Silhouette / .22LR Precision', tag: 'Rimfire / Offhand', desc: 'Standing offhand steel targets and precision .22LR positional training.' },
+  { id: 'Clay / Trap & Skeet', name: 'Trap, Skeet & Sporting Clays', tag: 'Shotgun Wing', desc: 'Moving aerial clay targets, choke selection, and lead consistency.' },
+  { id: 'Hunting / Metsästys', name: 'Hunting & Moose Track (Hirvirata)', tag: 'Field & Cold Bore', desc: 'Cold-bore reliability, ethical hunting loads, and moving game target proficiency.' }
+];
+
+// --- Helper Component: Clean Tactical AI Report Renderer ---
 function FormattedAiReport({ content }) {
   if (!content) return null;
 
-  // Split text into sections or lines to render professionally
   const lines = content.split('\n');
   const sections = [];
-  let currentSection = { title: 'Armorer & Logistics Briefing', items: [], textBlocks: [] };
+  let currentSection = { title: 'Armorer & Range Briefing', items: [], textBlocks: [] };
 
   lines.forEach(line => {
     const trimmed = line.trim();
-    if (!trimmed) return;
+    if (!trimmed || trimmed === '---') return;
 
     if (trimmed.startsWith('###') || trimmed.startsWith('##') || trimmed.startsWith('#')) {
       if (currentSection.items.length > 0 || currentSection.textBlocks.length > 0) {
@@ -67,7 +79,6 @@ function FormattedAiReport({ content }) {
     } else if (trimmed.startsWith('*') || trimmed.startsWith('-')) {
       currentSection.items.push(trimmed.replace(/^[\*\-]\s*/, '').replace(/\*\*/g, ''));
     } else if (trimmed.startsWith('|')) {
-      // Skip raw markdown table formatting lines
       if (!trimmed.includes('---')) {
         const cleanRow = trimmed.split('|').map(c => c.trim()).filter(Boolean).join(' — ');
         currentSection.items.push(cleanRow);
@@ -76,6 +87,7 @@ function FormattedAiReport({ content }) {
       currentSection.textBlocks.push(trimmed.replace(/\*\*/g, ''));
     }
   });
+
   if (currentSection.items.length > 0 || currentSection.textBlocks.length > 0) {
     sections.push(currentSection);
   }
@@ -84,13 +96,13 @@ function FormattedAiReport({ content }) {
     <div className="space-y-6">
       <div className="flex items-center space-x-3 border-b border-zinc-800 pb-4">
         <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></div>
-        <h3 className="text-base font-bold tracking-wider text-zinc-100">TACTICAL ARMORER & LOGISTICS ADVISORY</h3>
+        <h3 className="text-base font-bold tracking-wider text-zinc-100">ARMORER & RANGE DIAGNOSTIC</h3>
       </div>
 
       {sections.map((sec, idx) => (
         <div key={idx} className="bg-zinc-950/60 border border-zinc-800/80 rounded-2xl p-5 space-y-3">
           <h4 className="text-sm font-bold tracking-widest text-emerald-400 uppercase flex items-center gap-2">
-            <span className="text-zinc-600 font-mono">#{idx + 1}</span> {sec.title}
+            <span className="text-zinc-600 font-mono">0{idx + 1}</span> {sec.title}
           </h4>
 
           {sec.textBlocks.length > 0 && (
@@ -104,7 +116,7 @@ function FormattedAiReport({ content }) {
           {sec.items.length > 0 && (
             <ul className="space-y-2 pt-2 border-t border-zinc-900">
               {sec.items.map((item, iidx) => (
-                <li key={iidx} className="text-xs text-zinc-200 flex items-start gap-2.5 bg-zinc-900/50 p-2.5 rounded-xl border border-zinc-800/50">
+                <li key={iidx} className="text-xs text-zinc-200 flex items-start gap-2.5 bg-zinc-900/50 p-3 rounded-xl border border-zinc-800/50">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-1.5 shrink-0"></span>
                   <span className="leading-relaxed">{item}</span>
                 </li>
@@ -129,6 +141,15 @@ export default function App() {
   const [firearms, setFirearms] = useState([]);
   const [ammoReserves, setAmmoReserves] = useState([]);
   const [sessions, setSessions] = useState([]);
+
+  // Shooter Profile & Disciplines State
+  const [selectedDisciplines, setSelectedDisciplines] = useState([]);
+  const [customActivities, setCustomActivities] = useState([]);
+  const [newCustomActivity, setNewCustomActivity] = useState('');
+  const [divisionClass, setDivisionClass] = useState('');
+  const [monthlyRoundGoal, setMonthlyRoundGoal] = useState(300);
+  const [trainingFocusNotes, setTrainingFocusNotes] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
   
   // UI & Modal States
   const [loading, setLoading] = useState(true);
@@ -207,6 +228,11 @@ export default function App() {
       setFirearms([]);
       setAmmoReserves([]);
       setSessions([]);
+      setSelectedDisciplines([]);
+      setCustomActivities([]);
+      setDivisionClass('');
+      setMonthlyRoundGoal(300);
+      setTrainingFocusNotes('');
       return;
     }
 
@@ -227,10 +253,23 @@ export default function App() {
       setSessions(list);
     }, (err) => console.error("Sessions sync error:", err));
 
+    const shooterProfileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'shooter_activities');
+    const unsubProfile = onSnapshot(shooterProfileRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setSelectedDisciplines(data.selectedDisciplines || []);
+        setCustomActivities(data.customActivities || []);
+        setDivisionClass(data.divisionClass || '');
+        setMonthlyRoundGoal(data.monthlyRoundGoal ?? 300);
+        setTrainingFocusNotes(data.trainingFocusNotes || '');
+      }
+    }, (err) => console.error("Shooter profile sync error:", err));
+
     return () => {
       unsubGuns();
       unsubAmmo();
       unsubSessions();
+      unsubProfile();
     };
   }, [user, isVerified]);
 
@@ -268,6 +307,50 @@ export default function App() {
       showToast("Failed to save passkey verification. Check Firestore rules.", "error");
     } finally {
       setVerifyingPasskey(false);
+    }
+  };
+
+  // --- Handlers: Shooter Activities & Disciplines ---
+  const toggleDiscipline = (discId) => {
+    setSelectedDisciplines(prev => 
+      prev.includes(discId) ? prev.filter(id => id !== discId) : [...prev, discId]
+    );
+  };
+
+  const handleAddCustomActivity = (e) => {
+    e.preventDefault();
+    const cleaned = newCustomActivity.trim();
+    if (!cleaned) return;
+    if (!customActivities.includes(cleaned)) {
+      setCustomActivities(prev => [...prev, cleaned]);
+    }
+    setNewCustomActivity('');
+  };
+
+  const handleRemoveCustomActivity = (item) => {
+    setCustomActivities(prev => prev.filter(a => a !== item));
+  };
+
+  const handleSaveShooterProfile = async (e) => {
+    e.preventDefault();
+    if (!user) return;
+    setSavingProfile(true);
+    try {
+      const shooterProfileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'shooter_activities');
+      await setDoc(shooterProfileRef, {
+        selectedDisciplines,
+        customActivities,
+        divisionClass,
+        monthlyRoundGoal: Number(monthlyRoundGoal) || 0,
+        trainingFocusNotes,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      showToast("Disciplines & training profile saved! AI Armorer updated.");
+    } catch (err) {
+      console.error("Error saving shooter profile:", err);
+      showToast("Failed to save shooter profile", "error");
+    } finally {
+      setSavingProfile(false);
     }
   };
 
@@ -494,9 +577,15 @@ export default function App() {
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
       const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
 
-      const systemPrompt = "You are a master tactical armorer, competitive 3-gun/IPSC shooting coach, and logistics analyst. Analyze the user's armory inventory, ammo reserves, and recent session history. Provide concise, actionable maintenance advisories, restock forecasts, and tactical recommendations.";
+      const systemPrompt = "You are an experienced gunsmith and competitive shooting coach (familiar with SRA, IPSC, PRS, Benchrest, and 3-Gun). Speak like a knowledgeable range buddy—clear, practical, and direct, without overly dramatic military jargon or raw markdown tables. Tailor your maintenance advice, zeroing tips, and ammo restocking numbers specifically to the shooter's active disciplines, division/class, and monthly round goal. Use clean headings (###) and concise bullet points (-).";
       
       const payloadData = {
+        shooterProfile: {
+          activeDisciplines: [...selectedDisciplines, ...customActivities],
+          divisionOrClass: divisionClass || 'Not specified',
+          targetMonthlyRounds: monthlyRoundGoal,
+          trainingFocusAndGoals: trainingFocusNotes || 'None provided'
+        },
         firearms: firearms.map(g => ({ 
           name: g.name, 
           model: g.model, 
@@ -519,7 +608,7 @@ export default function App() {
 
       const payload = {
         contents: [{
-          parts: [{ text: `Here is my current armory and range log dataset:\n${JSON.stringify(payloadData, null, 2)}\n\nPlease provide expert armorer maintenance advisories and ammo restock forecasts.` }]
+          parts: [{ text: `Here is my shooter profile, disciplines, armory, and range log dataset:\n${JSON.stringify(payloadData, null, 2)}\n\nPlease give me practical gunsmith maintenance advice, discipline-specific setup/zero recommendations, and an ammo restock plan based on my monthly round target.` }]
         }],
         systemInstruction: {
           parts: [{ text: systemPrompt }]
@@ -650,6 +739,7 @@ export default function App() {
   const totalRoundsFiredAllTime = firearms.reduce((acc, g) => acc + (g.initialBaselineRounds || 0) + (g.sessionRoundsCount || 0), 0);
   const totalAmmoStock = ammoReserves.reduce((acc, a) => acc + a.currentStock, 0);
   const lowStockCount = ammoReserves.filter(a => a.currentStock <= a.minimumBufferTarget).length;
+  const allActiveActivities = [...selectedDisciplines, ...customActivities];
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-black">
@@ -665,7 +755,7 @@ export default function App() {
       )}
 
       {/* Top Header Navigation */}
-      <header className="border-b border-zinc-800 bg-zinc-900/60 backdrop-blur sticky top-0 z-40 px-6 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
+      <header className="border-b border-zinc-800 bg-zinc-900/60 backdrop-blur sticky top-0 z-40 px-6 py-4 flex flex-col xl:flex-row justify-between items-center gap-4">
         <div className="flex items-center space-x-3">
           <div className="bg-emerald-500/10 border border-emerald-500/30 p-2.5 rounded-xl text-emerald-400">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -681,19 +771,20 @@ export default function App() {
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex flex-wrap items-center gap-3">
-          <nav className="flex flex-wrap gap-2 bg-zinc-950/80 p-1.5 rounded-xl border border-zinc-800">
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <nav className="flex flex-wrap justify-center gap-1.5 bg-zinc-950/80 p-1.5 rounded-xl border border-zinc-800">
             {[
               { id: 'dashboard', label: 'Dashboard' },
               { id: 'vault', label: 'The Vault' },
               { id: 'ammo', label: 'Ammo Reserves' },
               { id: 'sessions', label: 'Range & Match' },
+              { id: 'disciplines', label: 'Disciplines' },
               { id: 'ai', label: 'AI Armorer & Analyst' },
             ].map(tab => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-4 py-2 rounded-lg text-xs font-semibold tracking-widest uppercase transition-all ${
+                className={`px-3.5 py-2 rounded-lg text-xs font-semibold tracking-widest uppercase transition-all ${
                   activeTab === tab.id
                     ? 'bg-emerald-500 text-zinc-950 shadow-md font-bold'
                     : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
@@ -747,6 +838,35 @@ export default function App() {
                 <h3 className={`text-3xl font-extrabold mt-2 ${lowStockCount > 0 ? 'text-rose-400' : 'text-zinc-100'}`}>{lowStockCount}</h3>
                 <p className="text-xs text-zinc-400 mt-2 font-mono">Calibers below target</p>
               </div>
+            </div>
+
+            {/* Active Disciplines Quick Bar */}
+            <div className="bg-zinc-900/60 border border-zinc-800 p-5 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-bold tracking-widest uppercase text-zinc-400">Active Shooting Disciplines & Focus</p>
+                {allActiveActivities.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {allActiveActivities.map((act, idx) => (
+                      <span key={idx} className="px-3 py-1 rounded-lg text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                        {act}
+                      </span>
+                    ))}
+                    {divisionClass && (
+                      <span className="px-3 py-1 rounded-lg text-xs font-mono bg-zinc-950 text-zinc-300 border border-zinc-800">
+                        Class: {divisionClass}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-zinc-500 italic">No disciplines configured yet (e.g., SRA, IPSC, Benchrest). Set them to tailor AI recommendations.</p>
+                )}
+              </div>
+              <button
+                onClick={() => setActiveTab('disciplines')}
+                className="shrink-0 px-4 py-2 rounded-xl border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs font-bold tracking-widest uppercase text-zinc-200 transition"
+              >
+                Edit Disciplines
+              </button>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -1089,6 +1209,176 @@ export default function App() {
           </div>
         )}
 
+        {/* --- VIEW: SHOOTER DISCIPLINES & ACTIVITIES --- */}
+        {activeTab === 'disciplines' && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <div>
+                <h2 className="text-xl font-bold tracking-wider text-zinc-100">Shooting Disciplines & Profile</h2>
+                <p className="text-xs text-zinc-400 tracking-wide mt-0.5">
+                  Select the shooting sports and activities you participate in so the AI Armorer tailors maintenance, zeroing, and ammo forecasts to your exact style.
+                </p>
+              </div>
+              <button
+                onClick={handleSaveShooterProfile}
+                disabled={savingProfile}
+                className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-5 py-2.5 rounded-xl text-xs tracking-wider uppercase transition shadow-md disabled:opacity-50 shrink-0"
+              >
+                {savingProfile ? 'Saving...' : 'Save Shooter Profile'}
+              </button>
+            </div>
+
+            {/* Preset Disciplines Grid */}
+            <div className="bg-zinc-900/60 border border-zinc-800 p-6 rounded-2xl space-y-4">
+              <div className="flex justify-between items-center">
+                <h3 className="text-xs font-bold tracking-widest uppercase text-zinc-300">Select Active Shooting Sports</h3>
+                <span className="text-xs font-mono text-emerald-400">{selectedDisciplines.length} selected</span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                {PRESET_DISCIPLINES.map(disc => {
+                  const isSelected = selectedDisciplines.includes(disc.id);
+                  return (
+                    <button
+                      key={disc.id}
+                      type="button"
+                      onClick={() => toggleDiscipline(disc.id)}
+                      className={`text-left p-4 rounded-xl border transition-all flex items-start justify-between gap-3 ${
+                        isSelected
+                          ? 'bg-emerald-500/10 border-emerald-500/60 shadow-sm'
+                          : 'bg-zinc-950/60 border-zinc-800/80 hover:border-zinc-700'
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`font-bold text-sm ${isSelected ? 'text-emerald-300' : 'text-zinc-200'}`}>
+                            {disc.name}
+                          </span>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-zinc-900 text-zinc-400 border border-zinc-800">
+                            {disc.tag}
+                          </span>
+                        </div>
+                        <p className="text-xs text-zinc-400 leading-relaxed">{disc.desc}</p>
+                      </div>
+                      <div className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 mt-0.5 ${
+                        isSelected
+                          ? 'bg-emerald-500 border-emerald-500 text-zinc-950'
+                          : 'border-zinc-700 bg-zinc-900'
+                      }`}>
+                        {isSelected && (
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Custom Activities & Goals */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-zinc-900/60 border border-zinc-800 p-6 rounded-2xl space-y-4">
+                <h3 className="text-xs font-bold tracking-widest uppercase text-zinc-300">Custom Activities & Specialty Training</h3>
+                <p className="text-xs text-zinc-400">
+                  Add any other shooting activities (e.g., Night Vision / NVG, Suppressed CQB, Load Development, Cowboy Action, Biathlon).
+                </p>
+
+                <form onSubmit={handleAddCustomActivity} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newCustomActivity}
+                    onChange={(e) => setNewCustomActivity(e.target.value)}
+                    placeholder="e.g., Suppressed Carbine, Load Testing..."
+                    className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500"
+                  />
+                  <button
+                    type="submit"
+                    className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-100 font-bold px-4 py-2.5 rounded-xl text-xs tracking-wider uppercase transition"
+                  >
+                    + Add
+                  </button>
+                </form>
+
+                {customActivities.length > 0 ? (
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    {customActivities.map((act, idx) => (
+                      <span key={idx} className="inline-flex items-center gap-2 bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 px-3 py-1.5 rounded-xl text-xs font-semibold">
+                        {act}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveCustomActivity(act)}
+                          className="text-emerald-400/70 hover:text-rose-400 font-bold"
+                          title="Remove"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-zinc-500 italic pt-1">No custom activities added.</p>
+                )}
+              </div>
+
+              <div className="bg-zinc-900/60 border border-zinc-800 p-6 rounded-2xl space-y-4">
+                <h3 className="text-xs font-bold tracking-widest uppercase text-zinc-300">Competition Class & Ammo Pace</h3>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">
+                      Division / Class (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={divisionClass}
+                      onChange={(e) => setDivisionClass(e.target.value)}
+                      placeholder="e.g., SRA Vakio / IPSC Production Optics"
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">
+                      Target Monthly Round Count
+                    </label>
+                    <input
+                      type="number"
+                      value={monthlyRoundGoal}
+                      onChange={(e) => setMonthlyRoundGoal(e.target.value)}
+                      placeholder="300"
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 font-mono font-bold"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">
+                    Current Goals & Gear Notes for AI
+                  </label>
+                  <textarea
+                    rows="3"
+                    value={trainingFocusNotes}
+                    onChange={(e) => setTrainingFocusNotes(e.target.value)}
+                    placeholder="e.g., Preparing for summer SRA qualifiers, focusing on 150m-300m rifle transitions and faster pistol reloads..."
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500"
+                  ></textarea>
+                </div>
+
+                <div className="flex justify-end pt-1">
+                  <button
+                    onClick={handleSaveShooterProfile}
+                    disabled={savingProfile}
+                    className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-5 py-2.5 rounded-xl text-xs tracking-wider uppercase transition shadow-md disabled:opacity-50"
+                  >
+                    {savingProfile ? 'Saving...' : 'Save Profile & Update AI'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* --- VIEW: AI ARMORER & ANALYST --- */}
         {activeTab === 'ai' && (
           <div className="space-y-6">
@@ -1098,12 +1388,15 @@ export default function App() {
                   <span>AI Armorer & Analyst</span>
                   <span className="bg-emerald-500/10 text-emerald-400 text-[10px] px-2 py-0.5 rounded border border-emerald-500/30 uppercase">Gemini Powered</span>
                 </h2>
-                <p className="text-xs text-zinc-400 tracking-wide mt-1">Get intelligent maintenance schedules, burn rate forecasts, and restocking advisories.</p>
+                <p className="text-xs text-zinc-400 tracking-wide mt-1">
+                  Get tailored maintenance schedules, setup tips, and ammo restock forecasts
+                  {allActiveActivities.length > 0 ? ` calibrated for ${allActiveActivities.join(', ')}.` : '.'}
+                </p>
               </div>
               <button 
                 onClick={generateArmorerInsight}
                 disabled={aiLoading}
-                className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-5 py-3 rounded-xl text-xs tracking-wider uppercase transition shadow-md disabled:opacity-50 flex items-center space-x-2"
+                className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-5 py-3 rounded-xl text-xs tracking-wider uppercase transition shadow-md disabled:opacity-50 flex items-center space-x-2 shrink-0"
               >
                 {aiLoading ? (
                   <>
@@ -1117,7 +1410,7 @@ export default function App() {
             </div>
 
             {aiInsight ? (
-              <div className="bg-zinc-900/60 border border-zinc-800 p-8 rounded-2xl">
+              <div className="bg-zinc-900/60 border border-zinc-800 p-6 sm:p-8 rounded-2xl">
                 <FormattedAiReport content={aiInsight} />
               </div>
             ) : (
@@ -1126,7 +1419,7 @@ export default function App() {
                   <svg className="w-12 h-12 mx-auto text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                   </svg>
-                  <p className="text-sm font-medium text-zinc-300">Click the button above to generate a comprehensive armorer diagnostic & ammo restock forecast based on your live vault data.</p>
+                  <p className="text-sm font-medium text-zinc-300">Click the button above to generate a tailored armorer diagnostic & ammo restock forecast based on your vault and shooting disciplines.</p>
                 </div>
               </div>
             )}
@@ -1313,6 +1606,8 @@ export default function App() {
                     <option value="Practice / Drills">Practice / Drills</option>
                     <option value="3-Gun / SRA Match">3-Gun / SRA Match</option>
                     <option value="IPSC Match">IPSC Match</option>
+                    <option value="PRS / Precision Match">PRS / Precision Match</option>
+                    <option value="Benchrest / Load Dev">Benchrest / Load Dev</option>
                     <option value="Zeroing / Chrono">Zeroing / Chrono</option>
                   </select>
                 </div>
