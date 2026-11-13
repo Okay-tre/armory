@@ -40,7 +40,82 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'armoury-1f82a';
 
 // Admin email (auto-approved without needing an invite passkey)
 const ADMIN_EMAIL = 'patteri6907@gmail.com';
-const INVITE_PASSKEY = import.meta.env.VITE_INVITE_PASSKEY || '3GUN-FINLAND-2026';
+const INVITE_PASSKEY = import.meta.env.VITE_INVITE_PASSKEY || '3GUN-2026';
+
+// --- Helper Component: Beautiful Tactical AI Report Renderer ---
+function FormattedAiReport({ content }) {
+  if (!content) return null;
+
+  // Split text into sections or lines to render professionally
+  const lines = content.split('\n');
+  const sections = [];
+  let currentSection = { title: 'Armorer & Logistics Briefing', items: [], textBlocks: [] };
+
+  lines.forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
+    if (trimmed.startsWith('###') || trimmed.startsWith('##') || trimmed.startsWith('#')) {
+      if (currentSection.items.length > 0 || currentSection.textBlocks.length > 0) {
+        sections.push(currentSection);
+      }
+      currentSection = {
+        title: trimmed.replace(/#/g, '').replace(/\*\*/g, '').trim(),
+        items: [],
+        textBlocks: []
+      };
+    } else if (trimmed.startsWith('*') || trimmed.startsWith('-')) {
+      currentSection.items.push(trimmed.replace(/^[\*\-]\s*/, '').replace(/\*\*/g, ''));
+    } else if (trimmed.startsWith('|')) {
+      // Skip raw markdown table formatting lines
+      if (!trimmed.includes('---')) {
+        const cleanRow = trimmed.split('|').map(c => c.trim()).filter(Boolean).join(' — ');
+        currentSection.items.push(cleanRow);
+      }
+    } else {
+      currentSection.textBlocks.push(trimmed.replace(/\*\*/g, ''));
+    }
+  });
+  if (currentSection.items.length > 0 || currentSection.textBlocks.length > 0) {
+    sections.push(currentSection);
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center space-x-3 border-b border-zinc-800 pb-4">
+        <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></div>
+        <h3 className="text-base font-bold tracking-wider text-zinc-100">TACTICAL ARMORER & LOGISTICS ADVISORY</h3>
+      </div>
+
+      {sections.map((sec, idx) => (
+        <div key={idx} className="bg-zinc-950/60 border border-zinc-800/80 rounded-2xl p-5 space-y-3">
+          <h4 className="text-sm font-bold tracking-widest text-emerald-400 uppercase flex items-center gap-2">
+            <span className="text-zinc-600 font-mono">#{idx + 1}</span> {sec.title}
+          </h4>
+
+          {sec.textBlocks.length > 0 && (
+            <div className="space-y-2">
+              {sec.textBlocks.map((tb, tidx) => (
+                <p key={tidx} className="text-xs text-zinc-300 leading-relaxed font-sans">{tb}</p>
+              ))}
+            </div>
+          )}
+
+          {sec.items.length > 0 && (
+            <ul className="space-y-2 pt-2 border-t border-zinc-900">
+              {sec.items.map((item, iidx) => (
+                <li key={iidx} className="text-xs text-zinc-200 flex items-start gap-2.5 bg-zinc-900/50 p-2.5 rounded-xl border border-zinc-800/50">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-1.5 shrink-0"></span>
+                  <span className="leading-relaxed">{item}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function App() {
   // --- State Management ---
@@ -419,7 +494,7 @@ export default function App() {
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
       const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
 
-      const systemPrompt = "You are a master tactical armorer, competitive 3-gun/IPSC shooting coach, and logistics analyst. Analyze the user's armory inventory, ammo reserves, and recent session history. Provide concise, actionable maintenance advisories, restock forecasts, and tactical recommendations in clean markdown format.";
+      const systemPrompt = "You are a master tactical armorer, competitive 3-gun/IPSC shooting coach, and logistics analyst. Analyze the user's armory inventory, ammo reserves, and recent session history. Provide concise, actionable maintenance advisories, restock forecasts, and tactical recommendations.";
       
       const payloadData = {
         firearms: firearms.map(g => ({ 
@@ -1042,8 +1117,8 @@ export default function App() {
             </div>
 
             {aiInsight ? (
-              <div className="bg-zinc-900/60 border border-zinc-800 p-8 rounded-2xl prose prose-invert max-w-none text-sm leading-relaxed whitespace-pre-wrap font-sans">
-                {aiInsight}
+              <div className="bg-zinc-900/60 border border-zinc-800 p-8 rounded-2xl">
+                <FormattedAiReport content={aiInsight} />
               </div>
             ) : (
               <div className="text-center py-20 bg-zinc-900/40 border border-zinc-800 rounded-2xl">
