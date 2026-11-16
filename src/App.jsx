@@ -41,6 +41,57 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'armoury-1f82a';
 const ADMIN_EMAIL = 'patteri6907@gmail.com';
 const INVITE_PASSKEY = import.meta.env.VITE_INVITE_PASSKEY || '3GUN-2026';
 
+// --- Universal Caliber Normalization & Family Matching ---
+// Recognizes any caliber you input and links aliases across firearms, ammo loads, and sessions
+const CALIBER_FAMILY_MAP = [
+  { key: '9x19mm', patterns: ['9mm', '9x19', '9x19mm', '9mm luger', '9mm para', '9mm parabellum', '9 mm'] },
+  { key: '.223 Rem / 5.56x45', patterns: ['.223', '223', '.223 rem', '223 rem', '5.56', '5.56x45', '5.56x45mm', '5.56 nato', '5,56'] },
+  { key: '.308 Win / 7.62x51', patterns: ['.308', '308', '.308 win', '308 win', '7.62x51', '7.62x51mm', '7.62 nato', '7,62x51'] },
+  { key: '7.62x39mm', patterns: ['7.62x39', '7.62x39mm', '7,62x39', '7.62 russian', 'm43'] },
+  { key: '7.62x53R / 7.62x54R', patterns: ['7.62x53r', '7.62x54r', '7,62x53r', '7,62x54r', '53r', '54r', 'mosin'] },
+  { key: '.22 LR', patterns: ['.22', '22lr', '.22lr', '.22 lr', '22 lr', '.22 long rifle'] },
+  { key: '12 Gauge', patterns: ['12ga', '12 ga', '12 gauge', '12/70', '12/76', '12/89', '12 kal', '12cal'] },
+  { key: '20 Gauge', patterns: ['20ga', '20 ga', '20 gauge', '20/70', '20/76'] },
+  { key: '6.5 Creedmoor', patterns: ['6.5cm', '6.5 cm', '6.5 creedmoor', '6,5 creedmoor', '6.5 creed'] },
+  { key: '6.5x55 Swedish', patterns: ['6.5x55', '6,5x55', '6.5x55 se', '6.5 swede'] },
+  { key: '.30-06 Springfield', patterns: ['30-06', '.30-06', '3006', '7.62x63'] },
+  { key: '.300 Blackout', patterns: ['300blk', '.300blk', '300 blk', '.300 blackout', '7.62x35'] },
+  { key: '.338 Lapua Mag', patterns: ['338lm', '.338lm', '.338 lapua', '338 lapua', '8.6x70'] },
+  { key: '.45 ACP', patterns: ['45acp', '.45acp', '.45 acp', '45 acp', '.45 auto', '11.43x23'] },
+  { key: '.40 S&W', patterns: ['40sw', '.40sw', '.40 s&w', '40 s&w', '10x22'] },
+  { key: '10mm Auto', patterns: ['10mm', '10mm auto', '10x25'] },
+  { key: '.38 Special / .357 Mag', patterns: ['.38', '38 spl', '.38 special', '.357', '357 mag', '.357 magnum'] },
+];
+
+function getCanonicalCaliber(rawCaliber) {
+  if (!rawCaliber) return 'Unspecified';
+  const cleaned = rawCaliber.trim();
+  const norm = cleaned.toLowerCase().replace(/\s+/g, ' ');
+  const compact = norm.replace(/[\s\-\.\/]/g, '');
+
+  for (const family of CALIBER_FAMILY_MAP) {
+    for (const p of family.patterns) {
+      const pNorm = p.toLowerCase();
+      const pCompact = pNorm.replace(/[\s\-\.\/]/g, '');
+      if (norm === pNorm || compact === pCompact) {
+        return family.key;
+      }
+    }
+  }
+  // For any custom/less common caliber (e.g., 9.3x62, .222 Rem, 7mm Rem Mag, .32 S&W), preserve clean formatted string
+  return cleaned;
+}
+
+function calibersMatch(calA, calB) {
+  if (!calA || !calB) return false;
+  const famA = getCanonicalCaliber(calA).toLowerCase();
+  const famB = getCanonicalCaliber(calB).toLowerCase();
+  if (famA === famB) return true;
+  const compactA = famA.replace(/[\s\-\.\/]/g, '');
+  const compactB = famB.replace(/[\s\-\.\/]/g, '');
+  return compactA === compactB;
+}
+
 // Preset Shooting Disciplines (Finnish & International sports)
 const PRESET_DISCIPLINES = [
   { id: 'SRA', name: 'SRA (Sovellettu Reserviläisammunta)', tag: 'Dynamic Tactical', desc: 'Finnish applied reservist multi-gun shooting with rifle, pistol, shotgun & sniper stages.' },
@@ -273,6 +324,34 @@ export default function App() {
     };
   }, [user, isVerified]);
 
+  // --- Computed Caliber Grouping Across All User Ammo Loads ---
+  const caliberGroups = React.useMemo(() => {
+    const groupsMap = {};
+    ammoReserves.forEach(ammo => {
+      const familyKey = getCanonicalCaliber(ammo.caliber);
+      if (!groupsMap[familyKey]) {
+        groupsMap[familyKey] = {
+          familyKey,
+          loads: [],
+          totalStock: 0,
+          totalTarget: 0
+        };
+      }
+      groupsMap[familyKey].loads.push(ammo);
+      groupsMap[familyKey].totalStock += Number(ammo.currentStock) || 0;
+      groupsMap[familyKey].totalTarget += Number(ammo.minimumBufferTarget) || 0;
+    });
+    return Object.values(groupsMap);
+  }, [ammoReserves]);
+
+  // Distinct known calibers from both firearms and ammo reserves for quick selection/autocomplete
+  const knownCalibers = React.useMemo(() => {
+    const set = new Set();
+    firearms.forEach(g => g.caliber && set.add(g.caliber.trim()));
+    ammoReserves.forEach(a => a.caliber && set.add(a.caliber.trim()));
+    return Array.from(set);
+  }, [firearms, ammoReserves]);
+
   const handleGoogleSignIn = async () => {
     try {
       const provider = new GoogleAuthProvider();
@@ -362,7 +441,7 @@ export default function App() {
     const gunData = {
       name: form.name.value,
       model: form.model.value,
-      caliber: form.caliber.value,
+      caliber: form.caliber.value.trim(),
       specs: form.specs.value,
       optics: form.optics.value,
       zeroDistance: form.zeroDistance.value,
@@ -429,8 +508,8 @@ export default function App() {
     e.preventDefault();
     if (!user) return;
     const form = e.target;
-    const name = form.name.value;
-    const caliber = form.caliber.value;
+    const name = form.name.value.trim();
+    const caliber = form.caliber.value.trim();
     const weight = form.weight.value;
     const weightUnit = form.weightUnit.value;
     const currentStock = Number(form.currentStock.value) || 0;
@@ -439,6 +518,7 @@ export default function App() {
     const ammoData = {
       name,
       caliber,
+      caliberFamily: getCanonicalCaliber(caliber),
       weight,
       weightUnit,
       currentStock,
@@ -460,6 +540,16 @@ export default function App() {
       setEditingAmmo(null);
     } catch (err) {
       showToast("Error saving ammo reserve", "error");
+    }
+  };
+
+  const handleDeleteAmmo = async (id) => {
+    if (!user) return;
+    try {
+      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'ammo_inventory', id));
+      showToast("Ammo load removed");
+    } catch (err) {
+      showToast("Failed to delete ammo load", "error");
     }
   };
 
@@ -503,8 +593,21 @@ export default function App() {
 
     const firearmEntries = firearms.map(gun => {
       const input = form.elements[`gun_rounds_${gun.id}`];
+      const ammoSelect = form.elements[`gun_ammo_${gun.id}`];
       const fired = input ? Number(input.value) || 0 : 0;
-      return { firearmId: gun.id, firearmName: gun.name, caliber: gun.caliber, roundsFired: fired };
+      const selectedAmmoId = ammoSelect ? ammoSelect.value : '';
+      const matchedAmmo = ammoReserves.find(a => a.id === selectedAmmoId);
+
+      return { 
+        firearmId: gun.id, 
+        firearmName: gun.name, 
+        caliber: gun.caliber, 
+        roundsFired: fired,
+        ammoId: matchedAmmo ? matchedAmmo.id : '',
+        ammoLabel: matchedAmmo 
+          ? `${matchedAmmo.name || matchedAmmo.caliber}${matchedAmmo.weight ? ` (${matchedAmmo.weight}${matchedAmmo.weightUnit || 'gr'})` : ''}` 
+          : ''
+      };
     }).filter(entry => entry.roundsFired > 0);
 
     if (firearmEntries.length === 0) {
@@ -512,20 +615,50 @@ export default function App() {
       return;
     }
 
-    const ammoConsumptionMap = {};
+    // Track exact deductions per specific ammo load ID, or fallback to matching caliber family
+    const stockDeductionsById = {};
+    const ammoConsumedSummary = [];
+
     firearmEntries.forEach(entry => {
-      ammoConsumptionMap[entry.caliber] = (ammoConsumptionMap[entry.caliber] || 0) + entry.roundsFired;
+      if (entry.ammoId) {
+        stockDeductionsById[entry.ammoId] = (stockDeductionsById[entry.ammoId] || 0) + entry.roundsFired;
+        ammoConsumedSummary.push({
+          caliber: entry.ammoLabel || entry.caliber,
+          roundsUsed: entry.roundsFired
+        });
+      } else {
+        // Fallback: match any reserve in the same caliber family
+        const matchingReserves = ammoReserves.filter(r => calibersMatch(r.caliber, entry.caliber));
+        if (matchingReserves.length > 0) {
+          // Deduct across available loads of that caliber
+          let remainingToDeduct = entry.roundsFired;
+          for (const res of matchingReserves) {
+            if (remainingToDeduct <= 0) break;
+            const available = Math.max(0, (res.currentStock || 0) - (stockDeductionsById[res.id] || 0));
+            const take = Math.min(available, remainingToDeduct);
+            if (take > 0) {
+              stockDeductionsById[res.id] = (stockDeductionsById[res.id] || 0) + take;
+              remainingToDeduct -= take;
+            }
+          }
+          // If still remaining, subtract from the first matching reserve
+          if (remainingToDeduct > 0) {
+            const first = matchingReserves[0];
+            stockDeductionsById[first.id] = (stockDeductionsById[first.id] || 0) + remainingToDeduct;
+          }
+        }
+        ammoConsumedSummary.push({
+          caliber: getCanonicalCaliber(entry.caliber),
+          roundsUsed: entry.roundsFired
+        });
+      }
     });
 
-    const ammoConsumed = Object.entries(ammoConsumptionMap).map(([cal, used]) => ({
-      caliber: cal,
-      roundsUsed: used
-    }));
-
-    for (const item of ammoConsumed) {
-      const reserve = ammoReserves.find(r => r.caliber.toLowerCase().includes(item.caliber.toLowerCase()) || item.caliber.toLowerCase().includes(r.caliber.toLowerCase()));
-      if (reserve && reserve.currentStock < item.roundsUsed) {
-        showToast(`Warning: Consuming ${item.roundsUsed} of ${item.caliber}, but stock is only ${reserve.currentStock}!`, "warning");
+    // Warn if any specific ammo reserve will go below 0
+    for (const [ammoId, used] of Object.entries(stockDeductionsById)) {
+      const reserve = ammoReserves.find(r => r.id === ammoId);
+      if (reserve && reserve.currentStock < used) {
+        showToast(`Warning: Consuming ${used} of ${reserve.name || reserve.caliber}, but stock is only ${reserve.currentStock}!`, "warning");
       }
     }
 
@@ -535,7 +668,7 @@ export default function App() {
       type,
       weatherConditions,
       firearmsUsed: firearmEntries,
-      ammoConsumed,
+      ammoConsumed: ammoConsumedSummary,
       notes
     };
 
@@ -552,10 +685,10 @@ export default function App() {
         }
       }
 
-      for (const item of ammoConsumed) {
-        const reserve = ammoReserves.find(r => r.caliber.toLowerCase().includes(item.caliber.toLowerCase()) || item.caliber.toLowerCase().includes(r.caliber.toLowerCase()));
+      for (const [ammoId, used] of Object.entries(stockDeductionsById)) {
+        const reserve = ammoReserves.find(r => r.id === ammoId);
         if (reserve) {
-          const newStock = Math.max(0, reserve.currentStock - item.roundsUsed);
+          const newStock = Math.max(0, reserve.currentStock - used);
           const ammoRef = doc(db, 'artifacts', appId, 'users', user.uid, 'ammo_inventory', reserve.id);
           await updateDoc(ammoRef, { currentStock: newStock });
         }
@@ -577,7 +710,7 @@ export default function App() {
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
       const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
 
-      const systemPrompt = "You are an experienced gunsmith and competitive shooting coach (familiar with SRA, IPSC, PRS, Benchrest, and 3-Gun). Speak like a knowledgeable range buddy—clear, practical, and direct, without overly dramatic military jargon or raw markdown tables. Tailor your maintenance advice, zeroing tips, and ammo restocking numbers specifically to the shooter's active disciplines, division/class, and monthly round goal. Use clean headings (###) and concise bullet points (-).";
+      const systemPrompt = "You are an experienced gunsmith and competitive shooting coach (familiar with SRA, IPSC, PRS, Benchrest, and 3-Gun). Speak like a knowledgeable range buddy—clear, practical, and direct, without overly dramatic military jargon or raw markdown tables. Analyze ALL calibers and ammunition loads present in the user's dataset (not just common ones), recognizing grouped loads of the same caliber. Tailor your maintenance advice, zeroing tips, and ammo restocking numbers specifically to the shooter's active disciplines, division/class, and monthly round goal. Use clean headings (###) and concise bullet points (-).";
       
       const payloadData = {
         shooterProfile: {
@@ -593,22 +726,28 @@ export default function App() {
           optics: g.optics,
           zeroDistance: g.zeroDistance,
           caliber: g.caliber, 
+          canonicalCaliber: getCanonicalCaliber(g.caliber),
           totalRounds: (g.initialBaselineRounds || 0) + (g.sessionRoundsCount || 0), 
           maintenanceCount: (g.maintenanceLog || []).length 
         })),
-        ammoReserves: ammoReserves.map(a => ({ 
-          name: a.name,
-          caliber: a.caliber, 
-          weight: a.weight ? `${a.weight}${a.weightUnit || 'gr'}` : undefined,
-          currentStock: a.currentStock, 
-          minimumBuffer: a.minimumBufferTarget 
+        ammoByCaliberGroup: caliberGroups.map(cg => ({
+          caliberFamily: cg.familyKey,
+          combinedStockAllLoads: cg.totalStock,
+          combinedBufferTarget: cg.totalTarget,
+          individualLoads: cg.loads.map(l => ({
+            name: l.name,
+            rawCaliber: l.caliber,
+            weight: l.weight ? `${l.weight}${l.weightUnit || 'gr'}` : undefined,
+            stock: l.currentStock,
+            bufferTarget: l.minimumBufferTarget
+          }))
         })),
         recentSessions: sessions.slice(0, 5).map(s => ({ date: s.date, type: s.type, location: s.location, fired: s.firearmsUsed }))
       };
 
       const payload = {
         contents: [{
-          parts: [{ text: `Here is my shooter profile, disciplines, armory, and range log dataset:\n${JSON.stringify(payloadData, null, 2)}\n\nPlease give me practical gunsmith maintenance advice, discipline-specific setup/zero recommendations, and an ammo restock plan based on my monthly round target.` }]
+          parts: [{ text: `Here is my shooter profile, disciplines, armory, and grouped ammunition dataset:\n${JSON.stringify(payloadData, null, 2)}\n\nPlease give me practical gunsmith maintenance advice, discipline-specific setup/zero recommendations, and an ammo restock plan covering all calibers in my inventory.` }]
         }],
         systemInstruction: {
           parts: [{ text: systemPrompt }]
@@ -738,7 +877,7 @@ export default function App() {
   const totalFirearms = firearms.length;
   const totalRoundsFiredAllTime = firearms.reduce((acc, g) => acc + (g.initialBaselineRounds || 0) + (g.sessionRoundsCount || 0), 0);
   const totalAmmoStock = ammoReserves.reduce((acc, a) => acc + a.currentStock, 0);
-  const lowStockCount = ammoReserves.filter(a => a.currentStock <= a.minimumBufferTarget).length;
+  const lowStockCount = caliberGroups.filter(cg => cg.totalStock <= cg.totalTarget).length;
   const allActiveActivities = [...selectedDisciplines, ...customActivities];
 
   return (
@@ -822,7 +961,7 @@ export default function App() {
                 <div className="absolute right-0 top-0 translate-x-3 -translate-y-3 w-24 h-24 bg-sky-500/5 rounded-full blur-xl group-hover:bg-sky-500/10 transition"></div>
                 <p className="text-xs text-zinc-400 tracking-widest uppercase font-medium">Total Ammo Reserves</p>
                 <h3 className="text-3xl font-extrabold text-zinc-100 mt-2">{totalAmmoStock.toLocaleString()} <span className="text-sm font-normal text-zinc-400">rds</span></h3>
-                <p className="text-xs text-sky-400 mt-2 font-mono">Across all calibers</p>
+                <p className="text-xs text-sky-400 mt-2 font-mono">Across {caliberGroups.length} caliber{caliberGroups.length === 1 ? '' : 's'}</p>
               </div>
 
               <div className="bg-zinc-900/80 border border-zinc-800 p-6 rounded-2xl shadow-sm relative overflow-hidden group">
@@ -905,25 +1044,28 @@ export default function App() {
                 )}
               </div>
 
+              {/* Caliber-Grouped Ammo Alerts Card */}
               <div className="bg-zinc-900/60 border border-zinc-800 p-6 rounded-2xl flex flex-col justify-between">
                 <div>
-                  <h2 className="text-sm font-bold tracking-widest uppercase text-zinc-300 mb-4">Ammo Reserve Alerts</h2>
-                  {ammoReserves.length === 0 ? (
+                  <h2 className="text-sm font-bold tracking-widest uppercase text-zinc-300 mb-4">Ammo Totals by Caliber</h2>
+                  {caliberGroups.length === 0 ? (
                     <p className="text-zinc-500 text-sm italic">No ammunition stocks tracked.</p>
                   ) : (
                     <div className="space-y-3">
-                      {ammoReserves.map(ammo => {
-                        const isLow = ammo.currentStock <= ammo.minimumBufferTarget;
-                        const percentage = Math.min(100, Math.round((ammo.currentStock / (ammo.minimumBufferTarget * 2 || 1000)) * 100));
+                      {caliberGroups.map(group => {
+                        const isLow = group.totalStock <= group.totalTarget;
+                        const percentage = Math.min(100, Math.round((group.totalStock / (group.totalTarget * 2 || 1000)) * 100));
                         return (
-                          <div key={ammo.id} className="bg-zinc-950/60 p-3 rounded-xl border border-zinc-800/80">
+                          <div key={group.familyKey} className="bg-zinc-950/60 p-3 rounded-xl border border-zinc-800/80">
                             <div className="flex justify-between items-center text-xs mb-1.5 gap-2">
                               <span className="font-semibold text-zinc-200 truncate">
-                                {ammo.name ? `${ammo.name} (${ammo.caliber})` : ammo.caliber}
-                                {ammo.weight && <span className="text-zinc-400 font-mono text-[10px] ml-1">• {ammo.weight}{ammo.weightUnit || 'gr'}</span>}
+                                {group.familyKey}
+                                <span className="text-zinc-500 font-mono text-[10px] ml-1.5">
+                                  ({group.loads.length} load{group.loads.length === 1 ? '' : 's'})
+                                </span>
                               </span>
                               <span className={`font-mono font-bold shrink-0 ${isLow ? 'text-rose-400' : 'text-emerald-400'}`}>
-                                {ammo.currentStock} rds {isLow && '(LOW)'}
+                                {group.totalStock.toLocaleString()} rds {isLow && '(LOW)'}
                               </span>
                             </div>
                             <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden">
@@ -971,12 +1113,20 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {firearms.map(gun => {
                   const totalRounds = (gun.initialBaselineRounds || 0) + (gun.sessionRoundsCount || 0);
+                  const matchingAmmoGroup = caliberGroups.find(cg => calibersMatch(cg.familyKey, gun.caliber));
                   return (
                     <div key={gun.id} className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-6 flex flex-col justify-between shadow-sm relative group">
                       <div>
                         <div className="flex justify-between items-start gap-2">
-                          <span className="px-2.5 py-1 rounded text-[10px] font-bold tracking-widest uppercase bg-zinc-800 text-emerald-400 border border-zinc-700">{gun.caliber}</span>
-                          <div className="flex space-x-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="px-2.5 py-1 rounded text-[10px] font-bold tracking-widest uppercase bg-zinc-800 text-emerald-400 border border-zinc-700">{gun.caliber}</span>
+                            {matchingAmmoGroup && (
+                              <span className="px-2 py-1 rounded text-[10px] font-mono bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                                {matchingAmmoGroup.totalStock.toLocaleString()} rds in stock
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex space-x-2 shrink-0">
                             <button onClick={() => { setEditingGun(gun); setShowGunModal(true); }} className="text-zinc-400 hover:text-zinc-100 text-xs">Edit</button>
                             <button onClick={() => handleDeleteFirearm(gun.id)} className="text-rose-400 hover:text-rose-300 text-xs">Del</button>
                           </div>
@@ -1056,15 +1206,41 @@ export default function App() {
         {/* --- VIEW: AMMO RESERVES --- */}
         {activeTab === 'ammo' && (
           <div className="space-y-6">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div>
                 <h2 className="text-xl font-bold tracking-wider text-zinc-100">Ammunition Reserves</h2>
-                <p className="text-xs text-zinc-400 tracking-wide mt-0.5">Monitor live inventory, burn rates, and purchase ledgers.</p>
+                <p className="text-xs text-zinc-400 tracking-wide mt-0.5">All loads of the same caliber are automatically recognized and totaled together.</p>
               </div>
               <button onClick={() => { setEditingAmmo(null); setShowAmmoModal(true); }} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-4 py-2.5 rounded-xl text-xs tracking-wider uppercase transition shadow-md">
-                + Track Caliber
+                + Add Ammo Load
               </button>
             </div>
+
+            {/* Combined Totals by Caliber Banner */}
+            {caliberGroups.length > 0 && (
+              <div className="bg-zinc-900/60 border border-zinc-800 p-5 rounded-2xl space-y-3">
+                <p className="text-[10px] font-bold tracking-widest uppercase text-zinc-400">Combined Caliber Totals (All Brands & Bullet Weights)</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {caliberGroups.map(group => {
+                    const isGroupLow = group.totalStock <= group.totalTarget;
+                    return (
+                      <div key={group.familyKey} className="bg-zinc-950/70 border border-zinc-800 p-3.5 rounded-xl flex justify-between items-center">
+                        <div>
+                          <p className="text-xs font-bold text-zinc-100">{group.familyKey}</p>
+                          <p className="text-[10px] text-zinc-500 font-mono mt-0.5">{group.loads.length} load{group.loads.length === 1 ? '' : 's'} tracked</p>
+                        </div>
+                        <div className="text-right">
+                          <p className={`text-base font-extrabold font-mono ${isGroupLow ? 'text-rose-400' : 'text-emerald-400'}`}>
+                            {group.totalStock.toLocaleString()}
+                          </p>
+                          <p className="text-[10px] text-zinc-500 font-mono">/ {group.totalTarget.toLocaleString()} target</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {ammoReserves.length === 0 ? (
               <div className="text-center py-16 bg-zinc-900/40 border border-zinc-800 rounded-2xl">
@@ -1075,6 +1251,7 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {ammoReserves.map(ammo => {
                   const isLow = ammo.currentStock <= ammo.minimumBufferTarget;
+                  const canonicalName = getCanonicalCaliber(ammo.caliber);
                   return (
                     <div key={ammo.id} className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-6 flex flex-col justify-between shadow-sm">
                       <div>
@@ -1084,12 +1261,22 @@ export default function App() {
                           }`}>
                             {isLow ? 'Buffer Warning' : 'Stock Optimal'}
                           </span>
-                          <button onClick={() => { setEditingAmmo(ammo); setShowAmmoModal(true); }} className="text-zinc-400 hover:text-zinc-100 text-xs">Edit</button>
+                          <div className="flex space-x-2">
+                            <button onClick={() => { setEditingAmmo(ammo); setShowAmmoModal(true); }} className="text-zinc-400 hover:text-zinc-100 text-xs">Edit</button>
+                            <button onClick={() => handleDeleteAmmo(ammo.id)} className="text-rose-400 hover:text-rose-300 text-xs">Del</button>
+                          </div>
                         </div>
 
                         <h3 className="text-lg font-bold text-zinc-100 mt-4">{ammo.name || ammo.caliber}</h3>
                         <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                          <span className="px-2 py-0.5 rounded text-[11px] font-mono font-semibold bg-zinc-800 text-emerald-400 border border-zinc-700/70">{ammo.caliber}</span>
+                          <span className="px-2 py-0.5 rounded text-[11px] font-mono font-semibold bg-zinc-800 text-emerald-400 border border-zinc-700/70">
+                            {canonicalName}
+                          </span>
+                          {ammo.caliber.toLowerCase() !== canonicalName.toLowerCase() && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-zinc-950 text-zinc-400 border border-zinc-800">
+                              {ammo.caliber}
+                            </span>
+                          )}
                           {ammo.weight && (
                             <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-zinc-950 text-zinc-300 border border-zinc-800">{ammo.weight} {ammo.weightUnit || 'gr'}</span>
                           )}
@@ -1112,7 +1299,7 @@ export default function App() {
                             <div className="space-y-1.5 max-h-24 overflow-y-auto">
                               {ammo.purchaseLedger.slice(-2).reverse().map((p, idx) => (
                                 <div key={idx} className="text-[11px] bg-zinc-950/40 p-2 rounded border border-zinc-800/60 flex justify-between font-mono">
-                                  <span>+{p.quantityAdded} rds @ ${p.costPerRound}/rd</span>
+                                  <span>+{p.quantityAdded} rds @ €{p.costPerRound}/rd</span>
                                   <span className="text-zinc-500">{p.date}</span>
                                 </div>
                               ))}
@@ -1140,7 +1327,7 @@ export default function App() {
             <div className="flex justify-between items-center">
               <div>
                 <h2 className="text-xl font-bold tracking-wider text-zinc-100">Range & Match Log</h2>
-                <p className="text-xs text-zinc-400 tracking-wide mt-0.5">Chronological record of range sessions, drills, and USPSA/3-Gun matches.</p>
+                <p className="text-xs text-zinc-400 tracking-wide mt-0.5">Chronological record of range sessions, drills, and SRA/IPSC matches.</p>
               </div>
               <button onClick={() => setShowSessionModal(true)} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-4 py-2.5 rounded-xl text-xs tracking-wider uppercase transition shadow-md">
                 + Log New Session
@@ -1176,9 +1363,12 @@ export default function App() {
                         <p className="text-[10px] text-zinc-400 uppercase tracking-widest font-semibold mb-2">Firearms & Rounds Fired</p>
                         <div className="space-y-2">
                           {s.firearmsUsed.map((f, idx) => (
-                            <div key={idx} className="bg-zinc-950/60 p-2.5 rounded-xl border border-zinc-800 flex justify-between text-xs">
-                              <span className="font-semibold text-zinc-200">{f.firearmName} <span className="text-zinc-500">({f.caliber})</span></span>
-                              <span className="font-mono font-bold text-emerald-400">{f.roundsFired} rds</span>
+                            <div key={idx} className="bg-zinc-950/60 p-2.5 rounded-xl border border-zinc-800 flex justify-between items-center text-xs gap-2">
+                              <div>
+                                <span className="font-semibold text-zinc-200">{f.firearmName}</span>
+                                <span className="text-zinc-500 ml-1.5">({f.ammoLabel || f.caliber})</span>
+                              </div>
+                              <span className="font-mono font-bold text-emerald-400 shrink-0">{f.roundsFired} rds</span>
                             </div>
                           ))}
                         </div>
@@ -1228,7 +1418,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Preset Disciplines Grid */}
             <div className="bg-zinc-900/60 border border-zinc-800 p-6 rounded-2xl space-y-4">
               <div className="flex justify-between items-center">
                 <h3 className="text-xs font-bold tracking-widest uppercase text-zinc-300">Select Active Shooting Sports</h3>
@@ -1277,7 +1466,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Custom Activities & Goals */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="bg-zinc-900/60 border border-zinc-800 p-6 rounded-2xl space-y-4">
                 <h3 className="text-xs font-bold tracking-widest uppercase text-zinc-300">Custom Activities & Specialty Training</h3>
@@ -1389,7 +1577,7 @@ export default function App() {
                   <span className="bg-emerald-500/10 text-emerald-400 text-[10px] px-2 py-0.5 rounded border border-emerald-500/30 uppercase">Gemini Powered</span>
                 </h2>
                 <p className="text-xs text-zinc-400 tracking-wide mt-1">
-                  Get tailored maintenance schedules, setup tips, and ammo restock forecasts
+                  Get tailored maintenance schedules, setup tips, and ammo restock forecasts across all your calibers
                   {allActiveActivities.length > 0 ? ` calibrated for ${allActiveActivities.join(', ')}.` : '.'}
                 </p>
               </div>
@@ -1419,7 +1607,7 @@ export default function App() {
                   <svg className="w-12 h-12 mx-auto text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                   </svg>
-                  <p className="text-sm font-medium text-zinc-300">Click the button above to generate a tailored armorer diagnostic & ammo restock forecast based on your vault and shooting disciplines.</p>
+                  <p className="text-sm font-medium text-zinc-300">Click the button above to generate a tailored armorer diagnostic & ammo restock forecast based on your vault, calibers, and shooting disciplines.</p>
                 </div>
               </div>
             )}
@@ -1427,6 +1615,25 @@ export default function App() {
         )}
 
       </main>
+
+      {/* Shared Caliber Datalist for Fast & Consistent Input */}
+      <datalist id="known-calibers-list">
+        {knownCalibers.map(cal => (
+          <option key={cal} value={cal} />
+        ))}
+        <option value="9x19mm" />
+        <option value=".223 Rem / 5.56x45" />
+        <option value=".308 Win / 7.62x51" />
+        <option value="7.62x39mm" />
+        <option value="7.62x53R" />
+        <option value=".22 LR" />
+        <option value="12 Gauge" />
+        <option value="6.5 Creedmoor" />
+        <option value="6.5x55 Swedish" />
+        <option value=".30-06 Springfield" />
+        <option value=".338 Lapua Mag" />
+        <option value=".45 ACP" />
+      </datalist>
 
       {/* --- MODALS --- */}
       {showGunModal && (
@@ -1445,7 +1652,7 @@ export default function App() {
                 </div>
                 <div>
                   <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Caliber</label>
-                  <input name="caliber" defaultValue={editingGun?.caliber || ''} placeholder="e.g., .223 Rem" required className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 font-medium" />
+                  <input list="known-calibers-list" name="caliber" defaultValue={editingGun?.caliber || ''} placeholder="e.g., .223 Rem, 12ga, 6.5CM" required className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 font-medium" />
                 </div>
               </div>
               <div>
@@ -1520,15 +1727,15 @@ export default function App() {
             <form onSubmit={handleSaveAmmo} className="space-y-4">
               <div>
                 <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Name / Load Description</label>
-                <input name="name" defaultValue={editingAmmo?.name || ''} placeholder="e.g., S&B FMJ Training / Magtech Range" required className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 font-medium" />
+                <input name="name" defaultValue={editingAmmo?.name || ''} placeholder="e.g., S&B FMJ, Lapua Scenar, Rottweil Slug..." required className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 font-medium" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Caliber</label>
-                  <input name="caliber" defaultValue={editingAmmo?.caliber || ''} placeholder="e.g., 9x19mm / .223 Rem" required className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 font-medium" />
+                  <input list="known-calibers-list" name="caliber" defaultValue={editingAmmo?.caliber || ''} placeholder="e.g., 9x19mm, 12ga, .308..." required className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 font-medium" />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Bullet Weight</label>
+                  <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Bullet / Shot Weight</label>
                   <div className="flex rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden focus-within:border-emerald-500">
                     <input type="number" step="any" name="weight" defaultValue={editingAmmo?.weight || ''} placeholder="124" required className="w-full bg-transparent px-3 py-2.5 text-sm text-zinc-100 focus:outline-none font-mono" />
                     <select name="weightUnit" defaultValue={editingAmmo?.weightUnit || 'gr'} className="bg-zinc-900 border-l border-zinc-800 px-2.5 py-2.5 text-xs font-mono font-bold text-emerald-400 focus:outline-none cursor-pointer">
@@ -1572,12 +1779,12 @@ export default function App() {
                 <input type="number" name="quantityAdded" defaultValue={1000} required className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 font-mono font-bold" />
               </div>
               <div>
-                <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Cost Per Round ($)</label>
+                <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Cost Per Round (€)</label>
                 <input type="number" step="0.01" name="costPerRound" defaultValue="0.28" required className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 font-mono font-bold" />
               </div>
               <div>
                 <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Vendor / Source</label>
-                <input name="vendor" placeholder="e.g., Brownells / Local Gun Club" required className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500" />
+                <input name="vendor" placeholder="e.g., Asetalo / Varusteleka / Club" required className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500" />
               </div>
               <div className="flex justify-end space-x-3 pt-4 border-t border-zinc-800">
                 <button type="button" onClick={() => setShowPurchaseModal(false)} className="px-4 py-2 rounded-xl text-xs font-bold tracking-wider uppercase text-zinc-400 hover:text-zinc-200">Cancel</button>
@@ -1592,7 +1799,7 @@ export default function App() {
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl relative my-8">
             <h3 className="text-lg font-bold text-zinc-100 mb-1">Log Range or Match Session</h3>
-            <p className="text-xs text-zinc-400 mb-4">Automatically increments firearm round counts and deducts ammo inventory.</p>
+            <p className="text-xs text-zinc-400 mb-4">Automatically increments firearm round counts and deducts from the matching caliber load.</p>
             
             <form onSubmit={handleSaveSession} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
@@ -1625,28 +1832,55 @@ export default function App() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-2">Firearms Used & Rounds Fired</label>
+                <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-2">Firearms Used, Ammo Load & Rounds Fired</label>
                 {firearms.length === 0 ? (
                   <p className="text-xs text-rose-400 italic">Please add firearms to your vault first.</p>
                 ) : (
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                    {firearms.map(gun => (
-                      <div key={gun.id} className="bg-zinc-950/60 p-3 rounded-xl border border-zinc-800 flex items-center justify-between gap-4">
-                        <div>
-                          <p className="font-semibold text-xs text-zinc-200">{gun.name}</p>
-                          <p className="text-[10px] text-zinc-400 font-mono">Caliber: {gun.caliber}</p>
+                  <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
+                    {firearms.map(gun => {
+                      const matchingLoads = ammoReserves.filter(a => calibersMatch(a.caliber, gun.caliber));
+                      return (
+                        <div key={gun.id} className="bg-zinc-950/60 p-3 rounded-xl border border-zinc-800 space-y-2">
+                          <div className="flex items-center justify-between gap-4">
+                            <div>
+                              <p className="font-semibold text-xs text-zinc-200">{gun.name}</p>
+                              <p className="text-[10px] text-zinc-400 font-mono">Caliber: {getCanonicalCaliber(gun.caliber)}</p>
+                            </div>
+                            <div className="w-32">
+                              <input 
+                                type="number" 
+                                name={`gun_rounds_${gun.id}`} 
+                                placeholder="Rounds fired" 
+                                defaultValue="0"
+                                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs font-mono text-zinc-100 focus:outline-none focus:border-emerald-500 text-right"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Specific Ammo Load Selector for this Firearm's Caliber */}
+                          <div className="pt-1 border-t border-zinc-900 flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-zinc-500 uppercase tracking-wider shrink-0">Ammo Load:</span>
+                            {matchingLoads.length > 0 ? (
+                              <select
+                                name={`gun_ammo_${gun.id}`}
+                                defaultValue={matchingLoads[0].id}
+                                className="w-full max-w-xs bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1 text-[11px] font-mono text-zinc-200 focus:outline-none focus:border-emerald-500"
+                              >
+                                {matchingLoads.map(load => (
+                                  <option key={load.id} value={load.id}>
+                                    {load.name || load.caliber} {load.weight ? `(${load.weight}${load.weightUnit || 'gr'})` : ''} — {load.currentStock} rds
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span className="text-[10px] text-amber-400/80 font-mono italic">
+                                No {getCanonicalCaliber(gun.caliber)} load in reserves
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <div className="w-32">
-                          <input 
-                            type="number" 
-                            name={`gun_rounds_${gun.id}`} 
-                            placeholder="Rounds fired" 
-                            defaultValue="0"
-                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs font-mono text-zinc-100 focus:outline-none focus:border-emerald-500 text-right"
-                          />
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
