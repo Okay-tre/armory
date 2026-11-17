@@ -219,6 +219,7 @@ export default function App() {
   const [selectedAmmoForPurchase, setSelectedAmmoForPurchase] = useState(null);
   
   const [showSessionModal, setShowSessionModal] = useState(false);
+  const [editingSession, setEditingSession] = useState(null);
   
   // Ad-hoc / Friend's Firearms added inside active session modal
   const [sessionAdHocGuns, setSessionAdHocGuns] = useState([]);
@@ -580,6 +581,35 @@ export default function App() {
     }
   };
 
+  // --- Handlers: Open New / Edit Session Modals ---
+  const openNewSessionModal = () => {
+    setEditingSession(null);
+    setSessionAdHocGuns([]);
+    setAdhocName('');
+    setAdhocCaliber('');
+    setAdhocRounds('');
+    setShowSessionModal(true);
+  };
+
+  const openEditSessionModal = (session) => {
+    setEditingSession(session);
+    const existingAdHoc = (session.firearmsUsed || [])
+      .filter(f => f.isAdHoc || !firearms.some(vg => vg.id === f.firearmId))
+      .map((f, idx) => ({
+        id: f.firearmId || `adhoc_edit_${idx}_${Date.now()}`,
+        name: f.firearmName,
+        caliber: f.caliber,
+        roundsFired: Number(f.roundsFired) || 0,
+        ammoId: f.ammoId || '',
+        isAdHoc: true
+      }));
+    setSessionAdHocGuns(existingAdHoc);
+    setAdhocName('');
+    setAdhocCaliber('');
+    setAdhocRounds('');
+    setShowSessionModal(true);
+  };
+
   // --- Handlers: Ad-Hoc / Friend's Firearm in Session Modal ---
   const handleAddSessionAdHocGun = (e) => {
     e.preventDefault();
@@ -593,11 +623,17 @@ export default function App() {
       return;
     }
 
+    const cleanName = adhocName.trim();
+    const displayName = cleanName.toLowerCase().includes('friend') || cleanName.toLowerCase().includes('rental')
+      ? cleanName
+      : `${cleanName} (Friend's / Rental)`;
+
     const newAdhoc = {
       id: 'adhoc_' + Date.now(),
-      name: `${adhocName.trim()} (Friend's / Rental)`,
+      name: displayName,
       caliber: adhocCaliber.trim(),
       roundsFired: rounds,
+      ammoId: '',
       isAdHoc: true
     };
 
@@ -612,7 +648,37 @@ export default function App() {
     setSessionAdHocGuns(prev => prev.filter(g => g.id !== id));
   };
 
-  // --- Handlers: Sessions ---
+  // --- Helper: Compute Ammo Stock Deductions for a Session's Entries ---
+  const computeAmmoDeductions = (entries, currentReserves) => {
+    const deductionsById = {};
+    entries.forEach(entry => {
+      if (entry.ammoId) {
+        deductionsById[entry.ammoId] = (deductionsById[entry.ammoId] || 0) + entry.roundsFired;
+      } else if (!entry.isAdHoc) {
+        // Legacy fallback: deduct from matching caliber pool for vault guns
+        const matchingReserves = currentReserves.filter(r => calibersMatch(r.caliber, entry.caliber));
+        if (matchingReserves.length > 0) {
+          let remainingToDeduct = entry.roundsFired;
+          for (const res of matchingReserves) {
+            if (remainingToDeduct <= 0) break;
+            const available = Math.max(0, (res.currentStock || 0) - (deductionsById[res.id] || 0));
+            const take = Math.min(available, remainingToDeduct);
+            if (take > 0) {
+              deductionsById[res.id] = (deductionsById[res.id] || 0) + take;
+              remainingToDeduct -= take;
+            }
+          }
+          if (remainingToDeduct > 0) {
+            const first = matchingReserves[0];
+            deductionsById[first.id] = (deductionsById[first.id] || 0) + remainingToDeduct;
+          }
+        }
+      }
+    });
+    return deductionsById;
+  };
+
+  // --- Handlers: Save (New or Edited) Session ---
   const handleSaveSession = async (e) => {
     e.preventDefault();
     if (!user) return;
@@ -646,7 +712,9 @@ export default function App() {
 
     // 2. Gather ad-hoc / friend's firearms entered
     const adhocEntries = sessionAdHocGuns.map(gun => {
+      const roundsInput = form.elements[`adhoc_rounds_${gun.id}`];
       const ammoSelect = form.elements[`adhoc_ammo_${gun.id}`];
+      const fired = roundsInput ? Number(roundsInput.value) || 0 : gun.roundsFired;
       const selectedAmmoId = ammoSelect ? ammoSelect.value : '';
       const matchedAmmo = ammoReserves.find(a => a.id === selectedAmmoId);
 
@@ -654,14 +722,14 @@ export default function App() {
         firearmId: gun.id,
         firearmName: gun.name,
         caliber: gun.caliber,
-        roundsFired: gun.roundsFired,
+        roundsFired: fired,
         ammoId: matchedAmmo ? matchedAmmo.id : '',
         ammoLabel: matchedAmmo 
           ? `${matchedAmmo.name || matchedAmmo.caliber}${matchedAmmo.weight ? ` (${matchedAmmo.weight}${matchedAmmo.weightUnit || 'gr'})` : ''}` 
           : '',
         isAdHoc: true
       };
-    });
+    }).filter(entry => entry.roundsFired > 0);
 
     const firearmEntries = [...vaultEntries, ...adhocEntries];
 
@@ -670,40 +738,10 @@ export default function App() {
       return;
     }
 
-    const stockDeductionsById = {};
-    const ammoConsumedSummary = [];
-
-    firearmEntries.forEach(entry => {
-      if (entry.ammoId) {
-        stockDeductionsById[entry.ammoId] = (stockDeductionsById[entry.ammoId] || 0) + entry.roundsFired;
-        ammoConsumedSummary.push({
-          caliber: entry.ammoLabel || entry.caliber,
-          roundsUsed: entry.roundsFired
-        });
-      } else {
-        const matchingReserves = ammoReserves.filter(r => calibersMatch(r.caliber, entry.caliber));
-        if (matchingReserves.length > 0) {
-          let remainingToDeduct = entry.roundsFired;
-          for (const res of matchingReserves) {
-            if (remainingToDeduct <= 0) break;
-            const available = Math.max(0, (res.currentStock || 0) - (stockDeductionsById[res.id] || 0));
-            const take = Math.min(available, remainingToDeduct);
-            if (take > 0) {
-              stockDeductionsById[res.id] = (stockDeductionsById[res.id] || 0) + take;
-              remainingToDeduct -= take;
-            }
-          }
-          if (remainingToDeduct > 0) {
-            const first = matchingReserves[0];
-            stockDeductionsById[first.id] = (stockDeductionsById[first.id] || 0) + remainingToDeduct;
-          }
-        }
-        ammoConsumedSummary.push({
-          caliber: getCanonicalCaliber(entry.caliber),
-          roundsUsed: entry.roundsFired
-        });
-      }
-    });
+    const ammoConsumedSummary = firearmEntries.map(entry => ({
+      caliber: entry.ammoLabel || getCanonicalCaliber(entry.caliber),
+      roundsUsed: entry.roundsFired
+    }));
 
     const sessionData = {
       date,
@@ -716,35 +754,111 @@ export default function App() {
     };
 
     try {
-      const sessionsCol = collection(db, 'artifacts', appId, 'users', user.uid, 'sessions');
-      await addDoc(sessionsCol, sessionData);
+      // Calculate net changes for Vault Firearms and Ammo Reserves
+      const roundDeltasByGunId = {};
+      const stockDeltasByAmmoId = {}; // positive = add back to stock, negative = deduct from stock
 
-      // Increment round count ONLY for vault firearms (ad-hoc / friend's guns don't live in the vault)
-      for (const entry of vaultEntries) {
-        const gun = firearms.find(g => g.id === entry.firearmId);
+      if (editingSession) {
+        // Reverse old session's vault gun rounds
+        (editingSession.firearmsUsed || []).forEach(oldEntry => {
+          if (!oldEntry.isAdHoc && oldEntry.firearmId) {
+            roundDeltasByGunId[oldEntry.firearmId] = (roundDeltasByGunId[oldEntry.firearmId] || 0) - (Number(oldEntry.roundsFired) || 0);
+          }
+        });
+        // Reverse old session's ammo deductions (restore stock)
+        const oldDeductions = computeAmmoDeductions(editingSession.firearmsUsed || [], ammoReserves);
+        Object.entries(oldDeductions).forEach(([ammoId, used]) => {
+          stockDeltasByAmmoId[ammoId] = (stockDeltasByAmmoId[ammoId] || 0) + used;
+        });
+      }
+
+      // Apply new session's vault gun rounds
+      vaultEntries.forEach(newEntry => {
+        roundDeltasByGunId[newEntry.firearmId] = (roundDeltasByGunId[newEntry.firearmId] || 0) + newEntry.roundsFired;
+      });
+
+      // Apply new session's ammo deductions
+      const newDeductions = computeAmmoDeductions(firearmEntries, ammoReserves);
+      Object.entries(newDeductions).forEach(([ammoId, used]) => {
+        stockDeltasByAmmoId[ammoId] = (stockDeltasByAmmoId[ammoId] || 0) - used;
+      });
+
+      if (editingSession) {
+        const sessionRef = doc(db, 'artifacts', appId, 'users', user.uid, 'sessions', editingSession.id);
+        await updateDoc(sessionRef, sessionData);
+      } else {
+        const sessionsCol = collection(db, 'artifacts', appId, 'users', user.uid, 'sessions');
+        await addDoc(sessionsCol, sessionData);
+      }
+
+      // Update affected vault firearms
+      for (const [gunId, delta] of Object.entries(roundDeltasByGunId)) {
+        if (delta === 0) continue;
+        const gun = firearms.find(g => g.id === gunId);
         if (gun) {
-          const newSessionRounds = (gun.sessionRoundsCount || 0) + entry.roundsFired;
+          const updatedRounds = Math.max(0, (gun.sessionRoundsCount || 0) + delta);
           const gunRef = doc(db, 'artifacts', appId, 'users', user.uid, 'firearms', gun.id);
-          await updateDoc(gunRef, { sessionRoundsCount: newSessionRounds });
+          await updateDoc(gunRef, { sessionRoundsCount: updatedRounds });
         }
       }
 
-      // Deduct ammo reserves (if user used their own ammo in friend's gun or vault gun)
-      for (const [ammoId, used] of Object.entries(stockDeductionsById)) {
+      // Update affected ammo reserves
+      for (const [ammoId, delta] of Object.entries(stockDeltasByAmmoId)) {
+        if (delta === 0) continue;
         const reserve = ammoReserves.find(r => r.id === ammoId);
         if (reserve) {
-          const newStock = Math.max(0, reserve.currentStock - used);
+          const updatedStock = Math.max(0, (reserve.currentStock || 0) + delta);
           const ammoRef = doc(db, 'artifacts', appId, 'users', user.uid, 'ammo_inventory', reserve.id);
-          await updateDoc(ammoRef, { currentStock: newStock });
+          await updateDoc(ammoRef, { currentStock: updatedStock });
         }
       }
 
-      showToast("Range session logged! Vault & Ammo reserves updated.");
+      showToast(editingSession
+        ? "Session updated! Round counts & ammo reserves adjusted."
+        : "Range session logged! Vault & Ammo reserves updated."
+      );
       setShowSessionModal(false);
+      setEditingSession(null);
       setSessionAdHocGuns([]);
     } catch (err) {
       console.error(err);
       showToast("Error saving range session", "error");
+    }
+  };
+
+  // --- Handlers: Delete Session (with automatic round & ammo rollback) ---
+  const handleDeleteSession = async (session) => {
+    if (!user) return;
+    try {
+      // 1. Roll back vault firearm round counts
+      for (const entry of (session.firearmsUsed || [])) {
+        if (!entry.isAdHoc && entry.firearmId) {
+          const gun = firearms.find(g => g.id === entry.firearmId);
+          if (gun) {
+            const revertedRounds = Math.max(0, (gun.sessionRoundsCount || 0) - (Number(entry.roundsFired) || 0));
+            const gunRef = doc(db, 'artifacts', appId, 'users', user.uid, 'firearms', gun.id);
+            await updateDoc(gunRef, { sessionRoundsCount: revertedRounds });
+          }
+        }
+      }
+
+      // 2. Restore deducted ammo reserves
+      const deductions = computeAmmoDeductions(session.firearmsUsed || [], ammoReserves);
+      for (const [ammoId, used] of Object.entries(deductions)) {
+        const reserve = ammoReserves.find(r => r.id === ammoId);
+        if (reserve) {
+          const restoredStock = (reserve.currentStock || 0) + used;
+          const ammoRef = doc(db, 'artifacts', appId, 'users', user.uid, 'ammo_inventory', reserve.id);
+          await updateDoc(ammoRef, { currentStock: restoredStock });
+        }
+      }
+
+      // 3. Delete session document
+      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'sessions', session.id));
+      showToast("Session deleted & rounds/ammo restored.");
+    } catch (err) {
+      console.error("Delete session error:", err);
+      showToast("Failed to delete session", "error");
     }
   };
 
@@ -1164,7 +1278,7 @@ export default function App() {
                 <div className="flex justify-between items-center mb-6">
                   <h2 className="text-sm font-bold tracking-widest uppercase text-zinc-300">Recent Range & Match Sessions</h2>
                   <button 
-                    onClick={() => { setSessionAdHocGuns([]); setShowSessionModal(true); }}
+                    onClick={openNewSessionModal}
                     className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-4 py-2 rounded-xl text-xs tracking-wider uppercase transition shadow-md"
                   >
                     + Log New Session
@@ -1184,10 +1298,16 @@ export default function App() {
                           <h4 className="font-bold text-zinc-100 mt-1">{s.location}</h4>
                           <p className="text-xs text-zinc-400 mt-0.5">Conditions: {s.weatherConditions}</p>
                         </div>
-                        <div className="text-right">
+                        <div className="flex items-center gap-2.5 self-end sm:self-center">
                           <span className="text-xs font-mono text-zinc-300 bg-zinc-900 px-3 py-1.5 rounded-lg border border-zinc-800">
                             {s.firearmsUsed.reduce((acc, f) => acc + f.roundsFired, 0)} rds fired
                           </span>
+                          <button
+                            onClick={() => openEditSessionModal(s)}
+                            className="text-xs font-bold uppercase tracking-wider text-zinc-400 hover:text-emerald-400 px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 hover:border-emerald-500/40 transition"
+                          >
+                            Edit
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -1503,7 +1623,7 @@ export default function App() {
                   </button>
                 </div>
 
-                <button onClick={() => { setSessionAdHocGuns([]); setShowSessionModal(true); }} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-4 py-2.5 rounded-xl text-xs tracking-wider uppercase transition shadow-md">
+                <button onClick={openNewSessionModal} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-4 py-2.5 rounded-xl text-xs tracking-wider uppercase transition shadow-md">
                   + Log New Session
                 </button>
               </div>
@@ -1512,13 +1632,13 @@ export default function App() {
             {sessions.length === 0 ? (
               <div className="text-center py-16 bg-zinc-900/40 border border-zinc-800 rounded-2xl">
                 <p className="text-zinc-400 text-sm">No sessions recorded yet.</p>
-                <button onClick={() => { setSessionAdHocGuns([]); setShowSessionModal(true); }} className="mt-4 text-emerald-400 hover:underline text-xs tracking-widest uppercase font-bold">Record your first session</button>
+                <button onClick={openNewSessionModal} className="mt-4 text-emerald-400 hover:underline text-xs tracking-widest uppercase font-bold">Record your first session</button>
               </div>
             ) : (
               <div className="space-y-4">
                 {sessions.map(s => (
                   <div key={s.id} className="bg-zinc-900/80 border border-zinc-800 p-6 rounded-2xl shadow-sm space-y-4">
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-zinc-800 pb-4">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-zinc-800 pb-4">
                       <div>
                         <div className="flex items-center space-x-3">
                           <span className="px-3 py-1 rounded text-[10px] font-bold uppercase tracking-widest bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">{s.type}</span>
@@ -1526,10 +1646,24 @@ export default function App() {
                         </div>
                         <h3 className="text-lg font-bold text-zinc-100 mt-2">{s.location}</h3>
                       </div>
-                      <div className="text-right">
+                      <div className="flex flex-wrap items-center gap-2 self-end sm:self-center">
                         <span className="text-xs font-mono text-zinc-300 bg-zinc-950 px-3 py-1.5 rounded-xl border border-zinc-800">
                           Weather: {s.weatherConditions}
                         </span>
+                        <button
+                          type="button"
+                          onClick={() => openEditSessionModal(s)}
+                          className="text-xs font-bold uppercase tracking-wider text-zinc-300 hover:text-emerald-400 bg-zinc-950 hover:bg-zinc-800 px-3 py-1.5 rounded-xl border border-zinc-800 hover:border-emerald-500/40 transition"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSession(s)}
+                          className="text-xs font-bold uppercase tracking-wider text-rose-400 hover:text-rose-300 bg-zinc-950 hover:bg-rose-950/40 px-3 py-1.5 rounded-xl border border-zinc-800 hover:border-rose-500/40 transition"
+                        >
+                          Del
+                        </button>
                       </div>
                     </div>
 
@@ -1958,22 +2092,38 @@ export default function App() {
         </div>
       )}
 
-      {/* New Range Session Modal with Ad-Hoc Firearm Support */}
+      {/* New / Edit Range Session Modal with Ad-Hoc Firearm Support */}
       {showSessionModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl relative my-8">
-            <h3 className="text-lg font-bold text-zinc-100 mb-1">Log Range or Match Session</h3>
-            <p className="text-xs text-zinc-400 mb-4">Record rounds fired through your vault firearms or ad-hoc friend's/rental guns and deduct ammo.</p>
+            <h3 className="text-lg font-bold text-zinc-100 mb-1">
+              {editingSession ? 'Edit Range or Match Session' : 'Log Range or Match Session'}
+            </h3>
+            <p className="text-xs text-zinc-400 mb-4">
+              {editingSession
+                ? 'Modify round counts, firearms, or notes. Vault totals and ammo reserves update automatically.'
+                : 'Record rounds fired through your vault firearms or ad-hoc friend\'s/rental guns and deduct ammo.'}
+            </p>
             
-            <form onSubmit={handleSaveSession} className="space-y-5">
+            <form key={editingSession ? editingSession.id : 'new-session'} onSubmit={handleSaveSession} className="space-y-5">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Session Date</label>
-                  <input type="date" name="date" defaultValue={new Date().toISOString().split('T')[0]} required className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 font-medium" />
+                  <input
+                    type="date"
+                    name="date"
+                    defaultValue={editingSession?.date || new Date().toISOString().split('T')[0]}
+                    required
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 font-medium"
+                  />
                 </div>
                 <div>
                   <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Session Type</label>
-                  <select name="type" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500">
+                  <select
+                    name="type"
+                    defaultValue={editingSession?.type || 'Practice / Drills'}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500"
+                  >
                     <option value="Practice / Drills">Practice / Drills</option>
                     <option value="3-Gun / SRA Match">3-Gun / SRA Match</option>
                     <option value="IPSC Match">IPSC Match</option>
@@ -1987,11 +2137,23 @@ export default function App() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Location / Range</label>
-                  <input name="location" placeholder="e.g., Pirkkala Range" required className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500" />
+                  <input
+                    name="location"
+                    defaultValue={editingSession?.location || ''}
+                    placeholder="e.g., Pirkkala Range"
+                    required
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500"
+                  />
                 </div>
                 <div>
                   <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Weather Conditions</label>
-                  <input name="weatherConditions" placeholder="e.g., -5°C, Wet/Muddy" required className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500" />
+                  <input
+                    name="weatherConditions"
+                    defaultValue={editingSession?.weatherConditions || ''}
+                    placeholder="e.g., -5°C, Wet/Muddy"
+                    required
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500"
+                  />
                 </div>
               </div>
 
@@ -2004,6 +2166,12 @@ export default function App() {
                   <div className="space-y-2.5 max-h-48 overflow-y-auto pr-1">
                     {firearms.map(gun => {
                       const matchingLoads = ammoReserves.filter(a => calibersMatch(a.caliber, gun.caliber));
+                      const existingEntry = editingSession?.firearmsUsed?.find(f => !f.isAdHoc && f.firearmId === gun.id);
+                      const defaultRounds = existingEntry ? existingEntry.roundsFired : 0;
+                      const defaultAmmoId = existingEntry?.ammoId && matchingLoads.some(l => l.id === existingEntry.ammoId)
+                        ? existingEntry.ammoId
+                        : (matchingLoads[0]?.id || '');
+
                       return (
                         <div key={gun.id} className="bg-zinc-950/60 p-3 rounded-xl border border-zinc-800 space-y-2">
                           <div className="flex items-center justify-between gap-4">
@@ -2016,7 +2184,7 @@ export default function App() {
                                 type="number" 
                                 name={`gun_rounds_${gun.id}`} 
                                 placeholder="Rounds fired" 
-                                defaultValue="0"
+                                defaultValue={defaultRounds}
                                 className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs font-mono text-zinc-100 focus:outline-none focus:border-emerald-500 text-right"
                               />
                             </div>
@@ -2027,7 +2195,7 @@ export default function App() {
                             {matchingLoads.length > 0 ? (
                               <select
                                 name={`gun_ammo_${gun.id}`}
-                                defaultValue={matchingLoads[0].id}
+                                defaultValue={defaultAmmoId}
                                 className="w-full max-w-xs bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1 text-[11px] font-mono text-zinc-200 focus:outline-none focus:border-emerald-500"
                               >
                                 {matchingLoads.map(load => (
@@ -2060,18 +2228,27 @@ export default function App() {
                   <div className="space-y-2">
                     {sessionAdHocGuns.map(adhoc => {
                       const matchingLoads = ammoReserves.filter(a => calibersMatch(a.caliber, adhoc.caliber));
+                      const defaultAdhocAmmo = adhoc.ammoId && matchingLoads.some(l => l.id === adhoc.ammoId)
+                        ? adhoc.ammoId
+                        : (editingSession ? '' : (matchingLoads[0]?.id || ''));
+
                       return (
                         <div key={adhoc.id} className="bg-zinc-900 p-2.5 rounded-lg border border-zinc-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 text-xs">
-                          <div>
+                          <div className="flex flex-wrap items-center gap-1.5">
                             <span className="font-bold text-zinc-200">{adhoc.name}</span>
-                            <span className="text-zinc-400 font-mono ml-1.5">({adhoc.caliber})</span>
-                            <span className="text-emerald-400 font-mono font-bold ml-2">{adhoc.roundsFired} rds</span>
+                            <span className="text-zinc-400 font-mono">({adhoc.caliber})</span>
                           </div>
-                          <div className="flex items-center gap-2 w-full sm:w-auto justify-between">
+                          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+                            <input
+                              type="number"
+                              name={`adhoc_rounds_${adhoc.id}`}
+                              defaultValue={adhoc.roundsFired}
+                              className="w-20 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] font-mono text-emerald-400 font-bold text-right"
+                            />
                             <select
                               name={`adhoc_ammo_${adhoc.id}`}
-                              defaultValue={matchingLoads[0]?.id || ''}
-                              className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] font-mono text-zinc-300"
+                              defaultValue={defaultAdhocAmmo}
+                              className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] font-mono text-zinc-300 max-w-[160px]"
                             >
                               {matchingLoads.map(load => (
                                 <option key={load.id} value={load.id}>{load.name || load.caliber}</option>
@@ -2129,12 +2306,29 @@ export default function App() {
 
               <div>
                 <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Session Notes & Malfunction Log</label>
-                <textarea name="notes" rows="2" placeholder="Stage observations, zero shifts, malfunctions..." className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500"></textarea>
+                <textarea
+                  name="notes"
+                  rows="2"
+                  defaultValue={editingSession?.notes || ''}
+                  placeholder="Stage observations, zero shifts, malfunctions..."
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500"
+                ></textarea>
               </div>
 
               <div className="flex justify-end space-x-3 pt-4 border-t border-zinc-800">
-                <button type="button" onClick={() => setShowSessionModal(false)} className="px-4 py-2 rounded-xl text-xs font-bold tracking-wider uppercase text-zinc-400 hover:text-zinc-200">Cancel</button>
-                <button type="submit" className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-5 py-2 rounded-xl text-xs tracking-wider uppercase shadow-md transition">Save & Deduct Ammo</button>
+                <button
+                  type="button"
+                  onClick={() => { setShowSessionModal(false); setEditingSession(null); }}
+                  className="px-4 py-2 rounded-xl text-xs font-bold tracking-wider uppercase text-zinc-400 hover:text-zinc-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-5 py-2 rounded-xl text-xs tracking-wider uppercase shadow-md transition"
+                >
+                  {editingSession ? 'Update Session' : 'Save & Deduct Ammo'}
+                </button>
               </div>
             </form>
           </div>
