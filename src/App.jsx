@@ -42,7 +42,6 @@ const ADMIN_EMAIL = 'patteri6907@gmail.com';
 const INVITE_PASSKEY = import.meta.env.VITE_INVITE_PASSKEY || '3GUN-2026';
 
 // --- Universal Caliber Normalization & Family Matching ---
-// Recognizes any caliber you input and links aliases across firearms, ammo loads, and sessions
 const CALIBER_FAMILY_MAP = [
   { key: '9x19mm', patterns: ['9mm', '9x19', '9x19mm', '9mm luger', '9mm para', '9mm parabellum', '9 mm'] },
   { key: '.223 Rem / 5.56x45', patterns: ['.223', '223', '.223 rem', '223 rem', '5.56', '5.56x45', '5.56x45mm', '5.56 nato', '5,56'] },
@@ -78,7 +77,6 @@ function getCanonicalCaliber(rawCaliber) {
       }
     }
   }
-  // For any custom/less common caliber (e.g., 9.3x62, .222 Rem, 7mm Rem Mag, .32 S&W), preserve clean formatted string
   return cleaned;
 }
 
@@ -92,7 +90,7 @@ function calibersMatch(calA, calB) {
   return compactA === compactB;
 }
 
-// Preset Shooting Disciplines (Finnish & International sports)
+// Preset Shooting Disciplines
 const PRESET_DISCIPLINES = [
   { id: 'SRA', name: 'SRA (Sovellettu Reserviläisammunta)', tag: 'Dynamic Tactical', desc: 'Finnish applied reservist multi-gun shooting with rifle, pistol, shotgun & sniper stages.' },
   { id: 'IPSC', name: 'IPSC / Practical Shooting', tag: 'Action / Speed', desc: 'High-speed dynamic handgun, PCC, rifle, or shotgun competition focused on DVC (Accuracy, Power, Speed).' },
@@ -193,6 +191,9 @@ export default function App() {
   const [ammoReserves, setAmmoReserves] = useState([]);
   const [sessions, setSessions] = useState([]);
 
+  // CSV Export Range Filter ('all' | '12m' | '24m')
+  const [exportRange, setExportRange] = useState('all');
+
   // Shooter Profile & Disciplines State
   const [selectedDisciplines, setSelectedDisciplines] = useState([]);
   const [customActivities, setCustomActivities] = useState([]);
@@ -219,11 +220,16 @@ export default function App() {
   
   const [showSessionModal, setShowSessionModal] = useState(false);
   
+  // Ad-hoc / Friend's Firearms added inside active session modal
+  const [sessionAdHocGuns, setSessionAdHocGuns] = useState([]);
+  const [adhocName, setAdhocName] = useState('');
+  const [adhocCaliber, setAdhocCaliber] = useState('');
+  const [adhocRounds, setAdhocRounds] = useState('');
+
   // AI Analyst State
   const [aiLoading, setAiLoading] = useState(false);
   const [aiInsight, setAiInsight] = useState(null);
 
-  // Show Toast helper
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 4000);
@@ -273,7 +279,6 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // --- Real-Time User-Scoped Firestore Listeners ---
   useEffect(() => {
     if (!user || !isVerified) {
       setFirearms([]);
@@ -324,7 +329,6 @@ export default function App() {
     };
   }, [user, isVerified]);
 
-  // --- Computed Caliber Grouping Across All User Ammo Loads ---
   const caliberGroups = React.useMemo(() => {
     const groupsMap = {};
     ammoReserves.forEach(ammo => {
@@ -344,7 +348,6 @@ export default function App() {
     return Object.values(groupsMap);
   }, [ammoReserves]);
 
-  // Distinct known calibers from both firearms and ammo reserves for quick selection/autocomplete
   const knownCalibers = React.useMemo(() => {
     const set = new Set();
     firearms.forEach(g => g.caliber && set.add(g.caliber.trim()));
@@ -383,13 +386,12 @@ export default function App() {
       showToast("Passkey accepted! Your private vault is unlocked.");
     } catch (err) {
       console.error("Passkey verification error:", err);
-      showToast("Failed to save passkey verification. Check Firestore rules.", "error");
+      showToast("Failed to save passkey verification.", "error");
     } finally {
       setVerifyingPasskey(false);
     }
   };
 
-  // --- Handlers: Shooter Activities & Disciplines ---
   const toggleDiscipline = (discId) => {
     setSelectedDisciplines(prev => 
       prev.includes(discId) ? prev.filter(id => id !== discId) : [...prev, discId]
@@ -433,7 +435,6 @@ export default function App() {
     }
   };
 
-  // --- Handlers: Firearms ---
   const handleSaveFirearm = async (e) => {
     e.preventDefault();
     if (!user) return;
@@ -503,7 +504,6 @@ export default function App() {
     }
   };
 
-  // --- Handlers: Ammo ---
   const handleSaveAmmo = async (e) => {
     e.preventDefault();
     if (!user) return;
@@ -580,6 +580,38 @@ export default function App() {
     }
   };
 
+  // --- Handlers: Ad-Hoc / Friend's Firearm in Session Modal ---
+  const handleAddSessionAdHocGun = (e) => {
+    e.preventDefault();
+    if (!adhocName.trim() || !adhocCaliber.trim()) {
+      showToast("Please enter a firearm name and caliber.", "error");
+      return;
+    }
+    const rounds = Number(adhocRounds) || 0;
+    if (rounds <= 0) {
+      showToast("Please enter rounds fired greater than 0.", "error");
+      return;
+    }
+
+    const newAdhoc = {
+      id: 'adhoc_' + Date.now(),
+      name: `${adhocName.trim()} (Friend's / Rental)`,
+      caliber: adhocCaliber.trim(),
+      roundsFired: rounds,
+      isAdHoc: true
+    };
+
+    setSessionAdHocGuns(prev => [...prev, newAdhoc]);
+    setAdhocName('');
+    setAdhocCaliber('');
+    setAdhocRounds('');
+    showToast("Added ad-hoc firearm to session.");
+  };
+
+  const handleRemoveSessionAdHocGun = (id) => {
+    setSessionAdHocGuns(prev => prev.filter(g => g.id !== id));
+  };
+
   // --- Handlers: Sessions ---
   const handleSaveSession = async (e) => {
     e.preventDefault();
@@ -591,7 +623,8 @@ export default function App() {
     const weatherConditions = form.weatherConditions.value;
     const notes = form.notes.value;
 
-    const firearmEntries = firearms.map(gun => {
+    // 1. Gather vault firearms entered
+    const vaultEntries = firearms.map(gun => {
       const input = form.elements[`gun_rounds_${gun.id}`];
       const ammoSelect = form.elements[`gun_ammo_${gun.id}`];
       const fired = input ? Number(input.value) || 0 : 0;
@@ -606,16 +639,37 @@ export default function App() {
         ammoId: matchedAmmo ? matchedAmmo.id : '',
         ammoLabel: matchedAmmo 
           ? `${matchedAmmo.name || matchedAmmo.caliber}${matchedAmmo.weight ? ` (${matchedAmmo.weight}${matchedAmmo.weightUnit || 'gr'})` : ''}` 
-          : ''
+          : '',
+        isAdHoc: false
       };
     }).filter(entry => entry.roundsFired > 0);
+
+    // 2. Gather ad-hoc / friend's firearms entered
+    const adhocEntries = sessionAdHocGuns.map(gun => {
+      const ammoSelect = form.elements[`adhoc_ammo_${gun.id}`];
+      const selectedAmmoId = ammoSelect ? ammoSelect.value : '';
+      const matchedAmmo = ammoReserves.find(a => a.id === selectedAmmoId);
+
+      return {
+        firearmId: gun.id,
+        firearmName: gun.name,
+        caliber: gun.caliber,
+        roundsFired: gun.roundsFired,
+        ammoId: matchedAmmo ? matchedAmmo.id : '',
+        ammoLabel: matchedAmmo 
+          ? `${matchedAmmo.name || matchedAmmo.caliber}${matchedAmmo.weight ? ` (${matchedAmmo.weight}${matchedAmmo.weightUnit || 'gr'})` : ''}` 
+          : '',
+        isAdHoc: true
+      };
+    });
+
+    const firearmEntries = [...vaultEntries, ...adhocEntries];
 
     if (firearmEntries.length === 0) {
       showToast("Please record at least one firearm round count for this session.", "error");
       return;
     }
 
-    // Track exact deductions per specific ammo load ID, or fallback to matching caliber family
     const stockDeductionsById = {};
     const ammoConsumedSummary = [];
 
@@ -627,10 +681,8 @@ export default function App() {
           roundsUsed: entry.roundsFired
         });
       } else {
-        // Fallback: match any reserve in the same caliber family
         const matchingReserves = ammoReserves.filter(r => calibersMatch(r.caliber, entry.caliber));
         if (matchingReserves.length > 0) {
-          // Deduct across available loads of that caliber
           let remainingToDeduct = entry.roundsFired;
           for (const res of matchingReserves) {
             if (remainingToDeduct <= 0) break;
@@ -641,7 +693,6 @@ export default function App() {
               remainingToDeduct -= take;
             }
           }
-          // If still remaining, subtract from the first matching reserve
           if (remainingToDeduct > 0) {
             const first = matchingReserves[0];
             stockDeductionsById[first.id] = (stockDeductionsById[first.id] || 0) + remainingToDeduct;
@@ -653,14 +704,6 @@ export default function App() {
         });
       }
     });
-
-    // Warn if any specific ammo reserve will go below 0
-    for (const [ammoId, used] of Object.entries(stockDeductionsById)) {
-      const reserve = ammoReserves.find(r => r.id === ammoId);
-      if (reserve && reserve.currentStock < used) {
-        showToast(`Warning: Consuming ${used} of ${reserve.name || reserve.caliber}, but stock is only ${reserve.currentStock}!`, "warning");
-      }
-    }
 
     const sessionData = {
       date,
@@ -676,7 +719,8 @@ export default function App() {
       const sessionsCol = collection(db, 'artifacts', appId, 'users', user.uid, 'sessions');
       await addDoc(sessionsCol, sessionData);
 
-      for (const entry of firearmEntries) {
+      // Increment round count ONLY for vault firearms (ad-hoc / friend's guns don't live in the vault)
+      for (const entry of vaultEntries) {
         const gun = firearms.find(g => g.id === entry.firearmId);
         if (gun) {
           const newSessionRounds = (gun.sessionRoundsCount || 0) + entry.roundsFired;
@@ -685,6 +729,7 @@ export default function App() {
         }
       }
 
+      // Deduct ammo reserves (if user used their own ammo in friend's gun or vault gun)
       for (const [ammoId, used] of Object.entries(stockDeductionsById)) {
         const reserve = ammoReserves.find(r => r.id === ammoId);
         if (reserve) {
@@ -696,13 +741,118 @@ export default function App() {
 
       showToast("Range session logged! Vault & Ammo reserves updated.");
       setShowSessionModal(false);
+      setSessionAdHocGuns([]);
     } catch (err) {
       console.error(err);
       showToast("Error saving range session", "error");
     }
   };
 
-  // --- AI Armorer & Analyst (Gemini API) ---
+  const handleExportSessionsCSV = () => {
+    if (sessions.length === 0) {
+      showToast("No sessions to export yet.", "error");
+      return;
+    }
+
+    const now = new Date();
+    let cutoffStr = '';
+    if (exportRange === '12m') {
+      const d = new Date(now);
+      d.setFullYear(d.getFullYear() - 1);
+      cutoffStr = d.toISOString().split('T')[0];
+    } else if (exportRange === '24m') {
+      const d = new Date(now);
+      d.setFullYear(d.getFullYear() - 2);
+      cutoffStr = d.toISOString().split('T')[0];
+    }
+
+    const filtered = cutoffStr
+      ? sessions.filter(s => (s.date || '') >= cutoffStr)
+      : [...sessions];
+
+    if (filtered.length === 0) {
+      showToast("No sessions found in the selected time range.", "warning");
+      return;
+    }
+
+    filtered.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+    const escapeCsv = (val) => {
+      if (val === null || val === undefined) return '""';
+      const str = String(val).replace(/"/g, '""');
+      return `"${str}"`;
+    };
+
+    const headers = [
+      'Date',
+      'Location',
+      'Training Description / Type',
+      'Firearm 1',
+      'Shots 1',
+      'Firearm 2',
+      'Shots 2',
+      'Firearm 3',
+      'Shots 3',
+      'Firearm 4',
+      'Shots 4',
+      'Firearm 5',
+      'Shots 5',
+      'Firearm 6',
+      'Shots 6',
+      'Total Shots',
+      'Notes'
+    ];
+
+    const rows = filtered.map(s => {
+      const guns = s.firearmsUsed || [];
+      const row = [
+        s.date || '',
+        s.location || '',
+        s.type || ''
+      ];
+
+      let totalShots = 0;
+      for (let i = 0; i < 6; i++) {
+        if (guns[i]) {
+          const gunLabel = guns[i].caliber
+            ? `${guns[i].firearmName} (${guns[i].caliber})`
+            : guns[i].firearmName;
+          const shots = Number(guns[i].roundsFired) || 0;
+          totalShots += shots;
+          row.push(gunLabel, shots);
+        } else {
+          row.push('', '');
+        }
+      }
+
+      const combinedNotes = [
+        s.weatherConditions ? `Weather: ${s.weatherConditions}` : '',
+        s.notes ? s.notes.trim() : ''
+      ].filter(Boolean).join(' | ');
+
+      row.push(totalShots, combinedNotes);
+      return row.map(escapeCsv).join(',');
+    });
+
+    const csvContent = '\uFEFF' + [headers.map(escapeCsv).join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const rangeTag = exportRange === 'all' ? 'all' : exportRange;
+    const filename = `ampumapaivakirja_${rangeTag}_${todayStr}.csv`;
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    showToast(`Exported ${filtered.length} session${filtered.length === 1 ? '' : 's'} to ${filename}`);
+  };
+
   const generateArmorerInsight = async () => {
     setAiLoading(true);
     setAiInsight(null);
@@ -710,7 +860,7 @@ export default function App() {
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
       const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
 
-      const systemPrompt = "You are an experienced gunsmith and competitive shooting coach (familiar with SRA, IPSC, PRS, Benchrest, and 3-Gun). Speak like a knowledgeable range buddy—clear, practical, and direct, without overly dramatic military jargon or raw markdown tables. Analyze ALL calibers and ammunition loads present in the user's dataset (not just common ones), recognizing grouped loads of the same caliber. Tailor your maintenance advice, zeroing tips, and ammo restocking numbers specifically to the shooter's active disciplines, division/class, and monthly round goal. Use clean headings (###) and concise bullet points (-).";
+      const systemPrompt = "You are an experienced gunsmith and competitive shooting coach (familiar with SRA, IPSC, PRS, Benchrest, and 3-Gun). Speak like a knowledgeable range buddy—clear, practical, and direct. Analyze ALL calibers and ammunition loads present in the user's dataset, recognizing grouped loads of the same caliber. Tailor your maintenance advice, zeroing tips, and ammo restocking numbers specifically to the shooter's active disciplines, division/class, and monthly round goal. Use clean headings (###) and concise bullet points (-).";
       
       const payloadData = {
         shooterProfile: {
@@ -783,7 +933,6 @@ export default function App() {
     );
   }
 
-  // --- Restricted Admin Login Gate ---
   if (!user) {
     return (
       <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center justify-center p-6 font-sans">
@@ -803,7 +952,7 @@ export default function App() {
             <p className="text-xs text-zinc-400 tracking-widest uppercase mt-1">Invite-Only Shooter Vault</p>
           </div>
           <p className="text-xs text-zinc-400 leading-relaxed">
-            Sign in with your Google account to access your personal firearm records, ammunition reserves, and match logs. First-time shooters require an invite passkey.
+            Sign in with your Google account to access your personal firearm records, ammunition reserves, and match logs.
           </p>
           <button
             onClick={handleGoogleSignIn}
@@ -822,7 +971,6 @@ export default function App() {
     );
   }
 
-  // --- First-Time Passkey Gate ---
   if (!isVerified) {
     return (
       <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center justify-center p-6 font-sans">
@@ -979,7 +1127,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Active Disciplines Quick Bar */}
             <div className="bg-zinc-900/60 border border-zinc-800 p-5 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div className="space-y-1.5">
                 <p className="text-[10px] font-bold tracking-widest uppercase text-zinc-400">Active Shooting Disciplines & Focus</p>
@@ -997,7 +1144,7 @@ export default function App() {
                     )}
                   </div>
                 ) : (
-                  <p className="text-xs text-zinc-500 italic">No disciplines configured yet (e.g., SRA, IPSC, Benchrest). Set them to tailor AI recommendations.</p>
+                  <p className="text-xs text-zinc-500 italic">No disciplines configured yet (e.g., SRA, IPSC, Benchrest).</p>
                 )}
               </div>
               <button
@@ -1013,14 +1160,14 @@ export default function App() {
                 <div className="flex justify-between items-center mb-6">
                   <h2 className="text-sm font-bold tracking-widest uppercase text-zinc-300">Recent Range & Match Sessions</h2>
                   <button 
-                    onClick={() => setShowSessionModal(true)}
+                    onClick={() => { setSessionAdHocGuns([]); setShowSessionModal(true); }}
                     className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-4 py-2 rounded-xl text-xs tracking-wider uppercase transition shadow-md"
                   >
                     + Log New Session
                   </button>
                 </div>
                 {sessions.length === 0 ? (
-                  <p className="text-zinc-500 text-sm italic py-8 text-center">No range sessions logged yet. Record your first trip to track ammo burn.</p>
+                  <p className="text-zinc-500 text-sm italic py-8 text-center">No range sessions logged yet.</p>
                 ) : (
                   <div className="space-y-4">
                     {sessions.slice(0, 3).map(s => (
@@ -1044,7 +1191,6 @@ export default function App() {
                 )}
               </div>
 
-              {/* Caliber-Grouped Ammo Alerts Card */}
               <div className="bg-zinc-900/60 border border-zinc-800 p-6 rounded-2xl flex flex-col justify-between">
                 <div>
                   <h2 className="text-sm font-bold tracking-widest uppercase text-zinc-300 mb-4">Ammo Totals by Caliber</h2>
@@ -1216,7 +1362,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Combined Totals by Caliber Banner */}
             {caliberGroups.length > 0 && (
               <div className="bg-zinc-900/60 border border-zinc-800 p-5 rounded-2xl space-y-3">
                 <p className="text-[10px] font-bold tracking-widest uppercase text-zinc-400">Combined Caliber Totals (All Brands & Bullet Weights)</p>
@@ -1324,20 +1469,46 @@ export default function App() {
         {/* --- VIEW: RANGE & MATCH LOG --- */}
         {activeTab === 'sessions' && (
           <div className="space-y-6">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
               <div>
                 <h2 className="text-xl font-bold tracking-wider text-zinc-100">Range & Match Log</h2>
                 <p className="text-xs text-zinc-400 tracking-wide mt-0.5">Chronological record of range sessions, drills, and SRA/IPSC matches.</p>
               </div>
-              <button onClick={() => setShowSessionModal(true)} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-4 py-2.5 rounded-xl text-xs tracking-wider uppercase transition shadow-md">
-                + Log New Session
-              </button>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-xl p-1">
+                  <select
+                    value={exportRange}
+                    onChange={(e) => setExportRange(e.target.value)}
+                    aria-label="Export Date Range"
+                    className="bg-transparent text-xs font-mono text-zinc-300 px-2.5 py-1.5 focus:outline-none cursor-pointer"
+                  >
+                    <option value="all" className="bg-zinc-900">All Sessions</option>
+                    <option value="12m" className="bg-zinc-900">Last 12 Months</option>
+                    <option value="24m" className="bg-zinc-900">Last 24 Months</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleExportSessionsCSV}
+                    className="bg-zinc-800 hover:bg-zinc-700 text-emerald-400 border border-zinc-700/80 font-bold px-3.5 py-1.5 rounded-lg text-xs tracking-wider uppercase transition flex items-center gap-1.5"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    <span>Export CSV (Sheets)</span>
+                  </button>
+                </div>
+
+                <button onClick={() => { setSessionAdHocGuns([]); setShowSessionModal(true); }} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-4 py-2.5 rounded-xl text-xs tracking-wider uppercase transition shadow-md">
+                  + Log New Session
+                </button>
+              </div>
             </div>
 
             {sessions.length === 0 ? (
               <div className="text-center py-16 bg-zinc-900/40 border border-zinc-800 rounded-2xl">
                 <p className="text-zinc-400 text-sm">No sessions recorded yet.</p>
-                <button onClick={() => setShowSessionModal(true)} className="mt-4 text-emerald-400 hover:underline text-xs tracking-widest uppercase font-bold">Record your first session</button>
+                <button onClick={() => { setSessionAdHocGuns([]); setShowSessionModal(true); }} className="mt-4 text-emerald-400 hover:underline text-xs tracking-widest uppercase font-bold">Record your first session</button>
               </div>
             ) : (
               <div className="space-y-4">
@@ -1367,6 +1538,7 @@ export default function App() {
                               <div>
                                 <span className="font-semibold text-zinc-200">{f.firearmName}</span>
                                 <span className="text-zinc-500 ml-1.5">({f.ammoLabel || f.caliber})</span>
+                                {f.isAdHoc && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] bg-amber-500/10 text-amber-400 border border-amber-500/30 uppercase">Friend / Rental</span>}
                               </div>
                               <span className="font-mono font-bold text-emerald-400 shrink-0">{f.roundsFired} rds</span>
                             </div>
@@ -1406,7 +1578,7 @@ export default function App() {
               <div>
                 <h2 className="text-xl font-bold tracking-wider text-zinc-100">Shooting Disciplines & Profile</h2>
                 <p className="text-xs text-zinc-400 tracking-wide mt-0.5">
-                  Select the shooting sports and activities you participate in so the AI Armorer tailors maintenance, zeroing, and ammo forecasts to your exact style.
+                  Select the shooting sports and activities you participate in so the AI Armorer tailors recommendations.
                 </p>
               </div>
               <button
@@ -1469,10 +1641,6 @@ export default function App() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="bg-zinc-900/60 border border-zinc-800 p-6 rounded-2xl space-y-4">
                 <h3 className="text-xs font-bold tracking-widest uppercase text-zinc-300">Custom Activities & Specialty Training</h3>
-                <p className="text-xs text-zinc-400">
-                  Add any other shooting activities (e.g., Night Vision / NVG, Suppressed CQB, Load Development, Cowboy Action, Biathlon).
-                </p>
-
                 <form onSubmit={handleAddCustomActivity} className="flex gap-2">
                   <input
                     type="text"
@@ -1494,14 +1662,7 @@ export default function App() {
                     {customActivities.map((act, idx) => (
                       <span key={idx} className="inline-flex items-center gap-2 bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 px-3 py-1.5 rounded-xl text-xs font-semibold">
                         {act}
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveCustomActivity(act)}
-                          className="text-emerald-400/70 hover:text-rose-400 font-bold"
-                          title="Remove"
-                        >
-                          ×
-                        </button>
+                        <button type="button" onClick={() => handleRemoveCustomActivity(act)} className="text-emerald-400/70 hover:text-rose-400 font-bold">×</button>
                       </span>
                     ))}
                   </div>
@@ -1522,7 +1683,7 @@ export default function App() {
                       type="text"
                       value={divisionClass}
                       onChange={(e) => setDivisionClass(e.target.value)}
-                      placeholder="e.g., SRA Vakio / IPSC Production Optics"
+                      placeholder="e.g., SRA Vakio / IPSC Production"
                       className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500"
                     />
                   </div>
@@ -1548,7 +1709,7 @@ export default function App() {
                     rows="3"
                     value={trainingFocusNotes}
                     onChange={(e) => setTrainingFocusNotes(e.target.value)}
-                    placeholder="e.g., Preparing for summer SRA qualifiers, focusing on 150m-300m rifle transitions and faster pistol reloads..."
+                    placeholder="e.g., Preparing for summer SRA qualifiers..."
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500"
                   ></textarea>
                 </div>
@@ -1577,8 +1738,7 @@ export default function App() {
                   <span className="bg-emerald-500/10 text-emerald-400 text-[10px] px-2 py-0.5 rounded border border-emerald-500/30 uppercase">Gemini Powered</span>
                 </h2>
                 <p className="text-xs text-zinc-400 tracking-wide mt-1">
-                  Get tailored maintenance schedules, setup tips, and ammo restock forecasts across all your calibers
-                  {allActiveActivities.length > 0 ? ` calibrated for ${allActiveActivities.join(', ')}.` : '.'}
+                  Get tailored maintenance schedules, setup tips, and ammo restock forecasts across all your calibers.
                 </p>
               </div>
               <button 
@@ -1607,7 +1767,7 @@ export default function App() {
                   <svg className="w-12 h-12 mx-auto text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                   </svg>
-                  <p className="text-sm font-medium text-zinc-300">Click the button above to generate a tailored armorer diagnostic & ammo restock forecast based on your vault, calibers, and shooting disciplines.</p>
+                  <p className="text-sm font-medium text-zinc-300">Click the button above to generate a tailored armorer diagnostic & ammo restock forecast.</p>
                 </div>
               </div>
             )}
@@ -1616,7 +1776,6 @@ export default function App() {
 
       </main>
 
-      {/* Shared Caliber Datalist for Fast & Consistent Input */}
       <datalist id="known-calibers-list">
         {knownCalibers.map(cal => (
           <option key={cal} value={cal} />
@@ -1652,7 +1811,7 @@ export default function App() {
                 </div>
                 <div>
                   <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Caliber</label>
-                  <input list="known-calibers-list" name="caliber" defaultValue={editingGun?.caliber || ''} placeholder="e.g., .223 Rem, 12ga, 6.5CM" required className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 font-medium" />
+                  <input list="known-calibers-list" name="caliber" defaultValue={editingGun?.caliber || ''} placeholder="e.g., .223 Rem" required className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500 font-medium" />
                 </div>
               </div>
               <div>
@@ -1795,13 +1954,14 @@ export default function App() {
         </div>
       )}
 
+      {/* New Range Session Modal with Ad-Hoc Firearm Support */}
       {showSessionModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl relative my-8">
             <h3 className="text-lg font-bold text-zinc-100 mb-1">Log Range or Match Session</h3>
-            <p className="text-xs text-zinc-400 mb-4">Automatically increments firearm round counts and deducts from the matching caliber load.</p>
+            <p className="text-xs text-zinc-400 mb-4">Record rounds fired through your vault firearms or ad-hoc friend's/rental guns and deduct ammo.</p>
             
-            <form onSubmit={handleSaveSession} className="space-y-4">
+            <form onSubmit={handleSaveSession} className="space-y-5">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">Session Date</label>
@@ -1831,12 +1991,13 @@ export default function App() {
                 </div>
               </div>
 
+              {/* 1. Vault Firearms Section */}
               <div>
-                <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-2">Firearms Used, Ammo Load & Rounds Fired</label>
+                <label className="block text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-2">Vault Firearms Used</label>
                 {firearms.length === 0 ? (
-                  <p className="text-xs text-rose-400 italic">Please add firearms to your vault first.</p>
+                  <p className="text-xs text-zinc-500 italic">No firearms in your vault yet. You can add ad-hoc guns below.</p>
                 ) : (
-                  <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
+                  <div className="space-y-2.5 max-h-48 overflow-y-auto pr-1">
                     {firearms.map(gun => {
                       const matchingLoads = ammoReserves.filter(a => calibersMatch(a.caliber, gun.caliber));
                       return (
@@ -1857,7 +2018,6 @@ export default function App() {
                             </div>
                           </div>
 
-                          {/* Specific Ammo Load Selector for this Firearm's Caliber */}
                           <div className="pt-1 border-t border-zinc-900 flex items-center justify-between gap-2">
                             <span className="text-[10px] text-zinc-500 uppercase tracking-wider shrink-0">Ammo Load:</span>
                             {matchingLoads.length > 0 ? (
@@ -1883,6 +2043,84 @@ export default function App() {
                     })}
                   </div>
                 )}
+              </div>
+
+              {/* 2. Ad-Hoc / Friend's Gun Section */}
+              <div className="bg-zinc-950/80 border border-zinc-800 p-4 rounded-xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] font-bold tracking-widest uppercase text-amber-400">Friend's Gun / Rental / Ad-Hoc Firearm</p>
+                  <span className="text-[10px] text-zinc-500 font-mono">{sessionAdHocGuns.length} added</span>
+                </div>
+
+                {sessionAdHocGuns.length > 0 && (
+                  <div className="space-y-2">
+                    {sessionAdHocGuns.map(adhoc => {
+                      const matchingLoads = ammoReserves.filter(a => calibersMatch(a.caliber, adhoc.caliber));
+                      return (
+                        <div key={adhoc.id} className="bg-zinc-900 p-2.5 rounded-lg border border-zinc-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 text-xs">
+                          <div>
+                            <span className="font-bold text-zinc-200">{adhoc.name}</span>
+                            <span className="text-zinc-400 font-mono ml-1.5">({adhoc.caliber})</span>
+                            <span className="text-emerald-400 font-mono font-bold ml-2">{adhoc.roundsFired} rds</span>
+                          </div>
+                          <div className="flex items-center gap-2 w-full sm:w-auto justify-between">
+                            <select
+                              name={`adhoc_ammo_${adhoc.id}`}
+                              defaultValue={matchingLoads[0]?.id || ''}
+                              className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] font-mono text-zinc-300"
+                            >
+                              {matchingLoads.map(load => (
+                                <option key={load.id} value={load.id}>{load.name || load.caliber}</option>
+                              ))}
+                              <option value="">Friend's Ammo / No Deduction</option>
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveSessionAdHocGun(adhoc.id)}
+                              className="text-rose-400 hover:text-rose-300 text-xs font-bold px-1.5 py-0.5 rounded bg-rose-500/10 border border-rose-500/20"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                  <input
+                    type="text"
+                    value={adhocName}
+                    onChange={(e) => setAdhocName(e.target.value)}
+                    placeholder="Gun Name (e.g. Friend's Glock 17)"
+                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-100 focus:outline-none focus:border-amber-500"
+                  />
+                  <input
+                    list="known-calibers-list"
+                    type="text"
+                    value={adhocCaliber}
+                    onChange={(e) => setAdhocCaliber(e.target.value)}
+                    placeholder="Caliber (e.g. 9x19mm)"
+                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-100 focus:outline-none focus:border-amber-500"
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      value={adhocRounds}
+                      onChange={(e) => setAdhocRounds(e.target.value)}
+                      placeholder="Rounds"
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs font-mono text-zinc-100 focus:outline-none focus:border-amber-500 text-right"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddSessionAdHocGun}
+                      className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 px-3 py-2 rounded-lg text-xs font-bold tracking-wider uppercase transition shrink-0"
+                    >
+                      + Add
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <div>
