@@ -688,6 +688,7 @@ export default function App() {
     const type = form.type.value;
     const weatherConditions = form.weatherConditions.value;
     const notes = form.notes.value;
+    const skipAmmoDeduction = form.skipAmmoDeduction ? form.skipAmmoDeduction.checked : false;
 
     // 1. Gather vault firearms entered
     const vaultEntries = firearms.map(gun => {
@@ -702,10 +703,10 @@ export default function App() {
         firearmName: gun.name, 
         caliber: gun.caliber, 
         roundsFired: fired,
-        ammoId: matchedAmmo ? matchedAmmo.id : '',
-        ammoLabel: matchedAmmo 
+        ammoId: skipAmmoDeduction ? '' : (matchedAmmo ? matchedAmmo.id : ''),
+        ammoLabel: skipAmmoDeduction ? 'No Deduction (Friend / External)' : (matchedAmmo 
           ? `${matchedAmmo.name || matchedAmmo.caliber}${matchedAmmo.weight ? ` (${matchedAmmo.weight}${matchedAmmo.weightUnit || 'gr'})` : ''}` 
-          : '',
+          : ''),
         isAdHoc: false
       };
     }).filter(entry => entry.roundsFired > 0);
@@ -723,10 +724,10 @@ export default function App() {
         firearmName: gun.name,
         caliber: gun.caliber,
         roundsFired: fired,
-        ammoId: matchedAmmo ? matchedAmmo.id : '',
-        ammoLabel: matchedAmmo 
+        ammoId: skipAmmoDeduction ? '' : (matchedAmmo ? matchedAmmo.id : ''),
+        ammoLabel: skipAmmoDeduction ? 'No Deduction (Friend / External)' : (matchedAmmo 
           ? `${matchedAmmo.name || matchedAmmo.caliber}${matchedAmmo.weight ? ` (${matchedAmmo.weight}${matchedAmmo.weightUnit || 'gr'})` : ''}` 
-          : '',
+          : ''),
         isAdHoc: true
       };
     }).filter(entry => entry.roundsFired > 0);
@@ -777,11 +778,13 @@ export default function App() {
         roundDeltasByGunId[newEntry.firearmId] = (roundDeltasByGunId[newEntry.firearmId] || 0) + newEntry.roundsFired;
       });
 
-      // Apply new session's ammo deductions
-      const newDeductions = computeAmmoDeductions(firearmEntries, ammoReserves);
-      Object.entries(newDeductions).forEach(([ammoId, used]) => {
-        stockDeltasByAmmoId[ammoId] = (stockDeltasByAmmoId[ammoId] || 0) - used;
-      });
+      // Apply new session's ammo deductions (only if skipAmmoDeduction is false)
+      if (!skipAmmoDeduction) {
+        const newDeductions = computeAmmoDeductions(firearmEntries, ammoReserves);
+        Object.entries(newDeductions).forEach(([ammoId, used]) => {
+          stockDeltasByAmmoId[ammoId] = (stockDeltasByAmmoId[ammoId] || 0) - used;
+        });
+      }
 
       if (editingSession) {
         const sessionRef = doc(db, 'artifacts', appId, 'users', user.uid, 'sessions', editingSession.id);
@@ -815,7 +818,7 @@ export default function App() {
 
       showToast(editingSession
         ? "Session updated! Round counts & ammo reserves adjusted."
-        : "Range session logged! Vault & Ammo reserves updated."
+        : "Range session logged! Vault updated."
       );
       setShowSessionModal(false);
       setEditingSession(null);
@@ -2315,6 +2318,19 @@ export default function App() {
                 ></textarea>
               </div>
 
+              {/* Master Global Exemption Checkbox */}
+              <div className="bg-zinc-950 border border-zinc-800 p-3.5 rounded-xl flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  id="skipAmmoDeduction"
+                  name="skipAmmoDeduction"
+                  className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus:ring-0 cursor-pointer"
+                />
+                <label htmlFor="skipAmmoDeduction" className="text-xs text-zinc-300 font-medium cursor-pointer select-none">
+                  <span className="font-bold text-amber-400">Don't reduce ammo reserves</span> for this session (Friend's ammo, borrowed, or external stock)
+                </label>
+              </div>
+
               <div className="flex justify-end space-x-3 pt-4 border-t border-zinc-800">
                 <button
                   type="button"
@@ -2327,7 +2343,7 @@ export default function App() {
                   type="submit"
                   className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-5 py-2 rounded-xl text-xs tracking-wider uppercase shadow-md transition"
                 >
-                  {editingSession ? 'Update Session' : 'Save & Deduct Ammo'}
+                  {editingSession ? 'Update Session' : 'Save Session'}
                 </button>
               </div>
             </form>
