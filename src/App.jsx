@@ -942,10 +942,12 @@ export default function App() {
           </div>
         )}
         <div className="max-w-md w-full bg-zinc-900/80 border border-zinc-800 rounded-2xl p-8 text-center shadow-2xl space-y-6">
-          <div className="w-16 h-16 mx-auto bg-emerald-500/10 border border-emerald-500/30 rounded-2xl flex items-center justify-center text-emerald-400">
-            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
+          <div className="w-16 h-16 mx-auto bg-emerald-500/10 border border-emerald-500/30 rounded-2xl overflow-hidden flex items-center justify-center">
+            <img
+              src={`${import.meta.env.BASE_URL}icon.png`}
+              alt="Armory & Range Log"
+              className="w-full h-full object-cover"
+            />
           </div>
           <div>
             <h1 className="text-xl font-bold tracking-wider text-zinc-100">ARMORY & RANGE LOG</h1>
@@ -1044,10 +1046,12 @@ export default function App() {
       {/* Top Header Navigation */}
       <header className="border-b border-zinc-800 bg-zinc-900/60 backdrop-blur sticky top-0 z-40 px-6 py-4 flex flex-col xl:flex-row justify-between items-center gap-4">
         <div className="flex items-center space-x-3">
-          <div className="bg-emerald-500/10 border border-emerald-500/30 p-2.5 rounded-xl text-emerald-400">
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-            </svg>
+          <div className="w-11 h-11 bg-emerald-500/10 border border-emerald-500/30 rounded-xl overflow-hidden flex items-center justify-center shrink-0">
+            <img
+              src={`${import.meta.env.BASE_URL}icon.png`}
+              alt="Armory & Range Log"
+              className="w-full h-full object-cover"
+            />
           </div>
           <div>
             <h1 className="text-lg font-bold tracking-wider text-zinc-100">ARMORY & RANGE LOG</h1>
